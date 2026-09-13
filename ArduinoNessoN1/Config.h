@@ -3,10 +3,10 @@
 
 #include <Arduino_Nesso_N1.h>
 
-#define FIRMWARE_VERSION "v3.7.1"
+#define FIRMWARE_VERSION "v3.7.2"
 #define SERIAL_ENABLED false
 
-#ifndef BEEP_PIN // per si un cas, ja que alguna vegada em va donar algun error
+#ifndef BEEP_PIN // just in case since it once gave me problems
 #define BEEP_PIN 11
 #endif
 
@@ -32,6 +32,15 @@ const float GYRO_ENTRY_DPS       = 200.0f; // rotation burst; high enough to avo
 // --- Evidence-gathering window: how long we watch after entry before checking for stillness. Elderly falls (grabbing at
 //     furniture, a slow stumble) can take longer to resolve than a clean fast fall.
 const unsigned long EVENT_WINDOW_MS = 1500;
+
+// How soon after the free-fall trough the impact spike must land to count as ONE coherent fall event (drop, then hit) rather than two unrelated accel
+// excursions that happened to land inside the same evidence window. Real falls from standing/seated height land well inside this
+const unsigned long FALL_IMPACT_WINDOW_MS = 600;
+
+// When free-fall + impact don't correlate in time (or only one of them happened at all), orientation/vswing scoring -- the two heaviest-weighted
+// signals -- gets scaled down by this factor instead of full strength. Doesn't zero them out: a fall broken by grabbing furniture can still show
+// impact without a clean free-fall trough.
+const float UNCORRELATED_EVIDENCE_FACTOR = 0.5f;
 
 // --- Stillness detection. We track the LONGEST CONTINUOUS streak of "quiet" samples rather than averaging over a fixed window,
 //     so a brief post-impact thrash doesn't poison the measurement.

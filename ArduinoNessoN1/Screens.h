@@ -10,5 +10,6 @@ void normalScreen(float lastFallScore);
 void confirmationScreen(int score);
 void alarmScreen(int score);
 unsigned long updateConfirmationScreen(unsigned long confirmStartTime, int &lastDisplayedCountdown);
+void batteryScreen();
 
 #endif

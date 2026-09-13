@@ -30,7 +30,7 @@ void resolveEpisode();
 void startConfirmation(float score);
 void triggerAlarm(float score);
 void resetToNormal();
-bool key1Pressed();
+bool keyPressed(ExpanderPin key);
 void drawVersionLabel(uint16_t color);
 
 enum FallState {
@@ -42,6 +42,10 @@ enum FallState {
 };
 
 FallState state = NORMAL;
+
+unsigned long batteryScreenStartTime = 0;
+bool nonBatteryScreenOn = false;
+bool batteryScreenOn = false;
 
 // Emergency button press
 unsigned long firstButtonPress = 0;
@@ -87,6 +91,12 @@ unsigned long lastAlarmBeep = 0;
 bool key1LastRaw = HIGH;
 unsigned long key1LastChangeTime = 0;
 
+float accelMagHistory[3] = {1.0f, 1.0f, 1.0f};
+float gyroMagHistory[3]  = {0.0f, 0.0f, 0.0f};
+
+unsigned long episodeMinAccelTime = 0;
+unsigned long episodeMaxAccelTime = 0;
+
 
 // ============================================================
 // Utility functions
@@ -117,16 +127,37 @@ float scoreFromRange(float value, float floorVal, float ceilingVal, float maxPoi
   return t * maxPoints;
 }
 
+// Median-of-3 filter: kills a single noisy IMU sample before it can set a
+// bogus episode extreme (or open an episode that shouldn't exist at all).
+// Adds ~2 samples of lag, negligible next to EVENT_WINDOW_MS.
+float medianOf3(float a, float b, float c) {
+  return std::max(std::min(a, b), std::min(std::max(a, b), c));
+}
+
+float filterAccelMagnitude(float raw) {
+  accelMagHistory[0] = accelMagHistory[1];
+  accelMagHistory[1] = accelMagHistory[2];
+  accelMagHistory[2] = raw;
+  return medianOf3(accelMagHistory[0], accelMagHistory[1], accelMagHistory[2]);
+}
+
+float filterGyroMagnitude(float raw) {
+  gyroMagHistory[0] = gyroMagHistory[1];
+  gyroMagHistory[1] = gyroMagHistory[2];
+  gyroMagHistory[2] = raw;
+  return medianOf3(gyroMagHistory[0], gyroMagHistory[1], gyroMagHistory[2]);
+}
+
 // Aux func to make key1 readings easier (debounce + flanc asc + pito)
-bool key1Pressed() {
-  bool raw = digitalRead(KEY1);
+bool keyPressed(ExpanderPin key) {
+  bool raw = digitalRead(key);
   bool justPressed = false;
 
   if (raw != key1LastRaw) {
     if (millis() - key1LastChangeTime > KEY_DEBOUNCE_MS) {
       if (raw == LOW && key1LastRaw == HIGH) { // flanc asc
         justPressed = true;
-        tone(BEEP_PIN, KEY_BEEP_FREQ_HZ, KEY_BEEP_DURATION_MS);
+        //tone(BEEP_PIN, KEY_BEEP_FREQ_HZ, KEY_BEEP_DURATION_MS);
       }
       key1LastRaw = raw;
       key1LastChangeTime = millis();
@@ -214,6 +245,9 @@ void startEvent() {
   episodeMinVerticalAccel = 0.0f;
   episodeMaxVerticalAccel = 0.0f;
 
+  episodeMinAccelTime = 0;
+  episodeMaxAccelTime = 0;
+
   DBG_PRINTLN();
   DBG_PRINTLN(">>> EVENT DETECTED - gathering evidence");
   DBG_PRINT("Initial orientation: roll=");
@@ -222,10 +256,11 @@ void startEvent() {
   DBG_PRINTLN(initialPitch);
 }
 
-// Called every sample during EVENT_DETECTED / STILLNESS_WAIT
+// Called every sample during EVENT_DETECTED / STILLNESS_WAIT and just before starting the event in NORMAL 
 void trackEpisodeExtremes(float accelMag, float gyroMag, float verticalAccel) {
-  episodeMinAccel = std::min(episodeMinAccel, accelMag);
-  episodeMaxAccel = std::max(episodeMaxAccel, accelMag);
+  unsigned long now = millis();
+  if (accelMag < episodeMinAccel) { episodeMinAccel = accelMag; episodeMinAccelTime = now; }
+  if (accelMag > episodeMaxAccel) { episodeMaxAccel = accelMag; episodeMaxAccelTime = now; }
   episodeMaxGyro = std::max(episodeMaxGyro, gyroMag);
   episodeMinVerticalAccel = std::min(episodeMinVerticalAccel, verticalAccel);
   episodeMaxVerticalAccel = std::max(episodeMaxVerticalAccel, verticalAccel);
@@ -249,30 +284,28 @@ void resolveEpisode() {
   float stillnessScore = scoreFromRange((float)longestQuietStreakMs, 0.0f, (float)STILLNESS_REQUIRED_MS, STILLNESS_MAX_PTS);
   float verticalSwing  = episodeMaxVerticalAccel - episodeMinVerticalAccel;
 
-  // IMPORTANT: rotation/orientation must not be allowed to create a fall
-  // on their own. A real fall should contain a meaningful acceleration
-  // event: either unloading/free-fall or an impact.
-  bool hasFallAccelerationEvidence =
-      (episodeMinAccel < FALL_FREEFALL_GATE_G) ||
-      (episodeMaxAccel > FALL_IMPACT_GATE_G);
+  bool hasFreefall = episodeMinAccel < FALL_FREEFALL_GATE_G;
+  bool hasImpact   = episodeMaxAccel > FALL_IMPACT_GATE_G;
 
+  // The textbook fall signature: unloading, THEN a hard stop, close enough
+  // together in time to be the same event rather than two coincidental
+  // accel excursions inside the same evidence window.
+  bool freefallThenImpact = hasFreefall && hasImpact && episodeMaxAccelTime > episodeMinAccelTime &&
+      (episodeMaxAccelTime - episodeMinAccelTime) <= FALL_IMPACT_WINDOW_MS;
+
+  bool hasFallAccelerationEvidence = hasFreefall || hasImpact;
+
+  // full credit for the two heaviest-weighted signals only goes to
+  // a correlated freefall->impact pair. A lone excursion, or two that don't
+  // line up in time, still counts as evidence -- just at reduced strength.
+  float evidenceConfidence = freefallThenImpact ? 1.0f : UNCORRELATED_EVIDENCE_FACTOR;
+  
   float orientationScore = 0.0f;
   float vswingScore = 0.0f;
 
   if (hasFallAccelerationEvidence) {
-    orientationScore = scoreFromRange(
-      orientationChangeDeg,
-      ORIENT_FLOOR_DEG,
-      ORIENT_CEIL_DEG,
-      ORIENT_MAX_PTS
-    );
-
-    vswingScore = scoreFromRange(
-      verticalSwing,
-      VSWING_FLOOR_G,
-      VSWING_CEIL_G,
-      VSWING_MAX_PTS
-    );
+    orientationScore = scoreFromRange(orientationChangeDeg, ORIENT_FLOOR_DEG, ORIENT_CEIL_DEG, ORIENT_MAX_PTS) * evidenceConfidence;
+    vswingScore = scoreFromRange(verticalSwing, VSWING_FLOOR_G, VSWING_CEIL_G, VSWING_MAX_PTS) * evidenceConfidence;
   }
 
   float total = freeFallScore + impactScore + rotationScore + orientationScore + stillnessScore + vswingScore;
@@ -288,7 +321,10 @@ void resolveEpisode() {
   DBG_PRINT("  orientation change="); DBG_PRINT(orientationChangeDeg, 1); DBG_PRINT(" deg ("); DBG_PRINT(orientationScore, 1); DBG_PRINTLN(" pts)");
   DBG_PRINT("  longest quiet streak="); DBG_PRINT(longestQuietStreakMs); DBG_PRINT("ms ("); DBG_PRINT(stillnessScore, 1); DBG_PRINTLN(" pts)");
   DBG_PRINT("  vertical swing="); DBG_PRINT(verticalSwing, 2); DBG_PRINT("g ("); DBG_PRINT(vswingScore, 1); DBG_PRINTLN(" pts)");
-  DBG_PRINT("  fall acceleration evidence="); DBG_PRINTLN(hasFallAccelerationEvidence ? "YES" : "NO");
+  DBG_PRINT("  freefall->impact gap=");
+  if (episodeMaxAccelTime > episodeMinAccelTime) { DBG_PRINT(episodeMaxAccelTime - episodeMinAccelTime); DBG_PRINTLN("ms"); }
+  else { DBG_PRINTLN("n/a"); }
+  DBG_PRINT("  correlated="); DBG_PRINT(freefallThenImpact ? "YES" : "NO"); DBG_PRINT(" (confidence x"); DBG_PRINT(evidenceConfidence, 2); DBG_PRINTLN(")");
   DBG_PRINT("  TOTAL SCORE: "); DBG_PRINT(total, 0); DBG_PRINTLN("%");
 
   if (total >= CONFIRMATION_THRESHOLD_PCT) {
@@ -312,6 +348,8 @@ void startConfirmation(float score) {
 
   DBG_PRINT(">>> POSSIBLE FALL ("); DBG_PRINT(score, 0); DBG_PRINTLN("%) - awaiting confirmation");
 
+  display.wakeup();
+  nonBatteryScreenOn = true;
   confirmationScreen((int) score);
 }
 
@@ -329,6 +367,8 @@ void triggerAlarm(float score) {
   DBG_PRINT("   FALL DETECTED! ("); DBG_PRINT(score, 0); DBG_PRINTLN("%)");
   DBG_PRINTLN("================================");
 
+  display.wakeup();
+  nonBatteryScreenOn = true;
   alarmScreen((int) score);
 }
 
@@ -341,7 +381,8 @@ void resetToNormal() {
   state = NORMAL;
   noTone(BEEP_PIN);
 
-  normalScreen(lastFallScore);
+  nonBatteryScreenOn = batteryScreenOn = false;
+  display.sleep();
 
   DBG_PRINTLN(">>> RESET -> NORMAL");
 }
@@ -404,8 +445,8 @@ void loop() {
     return;  // wait for the next fresh accelerometer sample
   }
 
-  float accelerationMagnitude = vectorMagnitude(ax, ay, az);
-  float gyroMagnitude = vectorMagnitude(gx, gy, gz);
+  float accelerationMagnitude = filterAccelMagnitude(vectorMagnitude(ax, ay, az));
+  float gyroMagnitude = filterGyroMagnitude(vectorMagnitude(gx, gy, gz));
 
   unsigned long nowMicros = micros();
   float dt = (nowMicros - previousMicros) / 1000000.0f;
@@ -420,7 +461,18 @@ void loop() {
   // it's computed right after updateOrientation().
   float verticalAccel = verticalAccelComponent(ax, ay, az, roll, pitch);
 
-  bool key1JustPressed = key1Pressed();
+  bool key1JustPressed = keyPressed(KEY1);
+  
+  if (key1JustPressed && !nonBatteryScreenOn && !batteryScreenOn) { // do not show the screen if another is on
+    batteryScreenStartTime = millis();
+    batteryScreenOn = true;
+    batteryScreen();
+    display.wakeup();
+  }
+  if (batteryScreenOn && millis() - batteryScreenStartTime >= 5000) { // after 10min, turn off the screen
+    batteryScreenOn = false;
+    if (!nonBatteryScreenOn) display.sleep(); // only sleep if this is the only screen on
+  }
 
   // manual trigger
   if (digitalRead(KEY1) == LOW) {
@@ -455,6 +507,7 @@ void loop() {
 
       if (lowAccel || highSpike || highGyro) {
         startEvent();
+        trackEpisodeExtremes(accelerationMagnitude, gyroMagnitude, verticalAccel);
       }
       break;
     }
