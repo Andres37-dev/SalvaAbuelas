@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 import cv2
 from collections import deque
-import FallDetectorMovenet as fall_detector
+import FallDetectorMovenetArduino as fall_detector
 
 from enum import Enum
 import time
@@ -91,11 +91,21 @@ class mqttHandler():
 class FallDetector:
 
     def __init__(self, camera_device=None):
-        self.camera_device = (
-            fall_detector.CAMERA_DEVICE
-            if camera_device is None
-            else camera_device
-        )
+
+        # If a specific camera is provided, use only that one.
+        # Otherwise, try /dev/video0 through /dev/video3.
+        if camera_device is not None:
+            self.camera_devices = [camera_device]
+        else:
+            self.camera_devices = [
+                "/dev/video0",
+                "/dev/video1",
+                "/dev/video2",
+                "/dev/video3",
+            ]
+    
+        self.camera_device = None
+
 
         self.fps = fall_detector.FPS
         self.frame_interval = 1.0 / self.fps
@@ -112,27 +122,85 @@ class FallDetector:
         self.previous_fall_detected = False
 
     def open(self):
-        cap = cv2.VideoCapture(self.camera_device)
 
-        if not cap.isOpened():
-            raise RuntimeError(
-                f"Could not open camera device {self.camera_device}"
+        print("Opening camera...")
+    
+        for camera_device in self.camera_devices:
+    
+            print(f"Trying camera device: {camera_device}")
+    
+            cap = cv2.VideoCapture(camera_device)
+    
+            # --------------------------------------------------------------
+            # Check whether OpenCV managed to open the device.
+            # --------------------------------------------------------------
+    
+            if not cap.isOpened():
+    
+                print(
+                    f"Could not open camera device {camera_device}"
+                )
+    
+                cap.release()
+                continue
+    
+            # --------------------------------------------------------------
+            # Opening the device isn't enough.
+            # Try reading an actual frame.
+            # --------------------------------------------------------------
+    
+            ret, frame = cap.read()
+    
+            if not ret or frame is None:
+    
+                print(
+                    f"Camera {camera_device} opened, "
+                    f"but could not read a frame."
+                )
+    
+                cap.release()
+                continue
+    
+            # --------------------------------------------------------------
+            # Camera works.
+            # --------------------------------------------------------------
+    
+            self.camera_device = camera_device
+    
+            print()
+            print(
+                f"Camera opened successfully: "
+                f"{camera_device}"
             )
-
-        ret, frame = cap.read()
-
-        if not ret:
-            cap.release()
-            raise RuntimeError("Could not read first frame from camera")
-
-        self.image_height, self.image_width = frame.shape[:2]
-
-        self.crop_region = fall_detector.init_crop_region(
-            self.image_height,
-            self.image_width,
+    
+            self.image_height, self.image_width = frame.shape[:2]
+    
+            print(
+                f"Camera resolution: "
+                f"{self.image_width}x{self.image_height}"
+            )
+    
+            self.crop_region = fall_detector.init_crop_region(
+                self.image_height,
+                self.image_width,
+            )
+    
+            print("Crop region initialized.")
+            print("Starting image processing...")
+            print()
+    
+            return cap, frame
+    
+        # ------------------------------------------------------------------
+        # None of the cameras worked.
+        # ------------------------------------------------------------------
+    
+        raise RuntimeError(
+            "Could not open any camera device. "
+            "Tried: "
+            + ", ".join(self.camera_devices)
         )
 
-        return cap, frame
 
     def process_frame(self, frame):
         """Lo mismo que en FallDetectorMovenet """
@@ -187,12 +255,11 @@ class FallDetector:
 
         return state, True
 
-    def should_publish_anomaly(self, state):
+    def should_report_fall(self, state):
         """
-        Publica anomalía si detecta caída.
+        Returns True only when a new fall is detected.
 
-        Si el detector permanece varios frames con fall_detected=True,
-        no se envía un mensaje MQTT por cada frame.
+        This prevents printing the same fall on every frame.
         """
         fall_detected = bool(state.get("fall_detected", False))
 
@@ -240,22 +307,57 @@ def main():
                 # ha transcurrido 1/FPS segundos.
                 continue
 
+            # --------------------------------------------------------------
+            # Get detection information.
+            # --------------------------------------------------------------
+
+            user_in_frame = bool(
+                state.get("user_in_frame", False)
+            )
+
+            fall_detected = bool(
+                state.get("fall_detected", False)
+            )
+
+            fall_reasons = state.get(
+                "fall_reasons",
+                []
+            )
+
             
-            if detector.should_publish_anomaly(state):
+            if detector.should_report_fall(state):
                
                 mqtt_client.publish(CAMERA_01_EVENTS, Messages.PREALERT.value)
 
-            # Debug opcional por consola.
+            # Debug por consola.
             print(
                 f"processed @ {detector.fps} FPS | "
-                f"user_in_frame={state.get('user_in_frame')} | "
-                f"fall_detected={state.get('fall_detected')} | "
-                f"reasons={state.get('fall_reasons')}"
+                f"user_in_frame={user_in_frame} | "
+                f"fall_detected={fall_detected} | "
+                f"reasons={fall_reasons}"
             )
+
+            if detector.should_report_fall(state):
+            
+                print()
+                print("========================================")
+                print("NEW FALL DETECTED")
+                print("Now we would be calling MQTT...")
+                print("========================================")
+                print()
+
+            if not user_in_frame:
+                pass
 
     except Exception as e:
         print(f"Error: {e}")
-       
+
+    finally:
+        if cap is not None:
+            cap.release()
+
+        print("Camera released.")
+        print("Program finished.") 
 
 
 if __name__ == "__main__":
