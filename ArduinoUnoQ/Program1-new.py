@@ -5,19 +5,36 @@ from collections.abc import Callable
 from enum import Enum
 import time
 
-class MQTTopics(str, Enum):
+
+class MQTTopics():
     NESSO_EVENTS = "Nesso/events"
+    NESSO_STATUS = "Nesso/status"           # FUTURE IMPLEMENTATION
+
     NESSO_COMMAND = "Nesso/command"
     NESSO_RESPONSE = "Nesso/response"
-    
-    CAMERA_01_EVENTS = "Cameras/01/events"
 
-class Messages(str, Enum):
-    PREALERT = "ANOMALIA_DETECTADA"        
-    CANCEL_ALARM = "FALSA_ALARMA"
-    MANUAL_PREALERT = "AYUDA_SOLICITADA"
+    CAMERA_01_EVENTS = "Cameras/01/events"  
+    CAMERA_01_STATUS = "Cameras/01/status"  # FUTURE IMPLEMENTATION
+
+class Messages():
+    NESSO_FALL = "ANOMALIA_DETECTADA"        
     CAMERA_FALL = "CAIDA_DETECTADA"          # ajustar cuando se cierre el Programa 2
-    CAMERA_HEARTBEAT = "CAMARA_OK"           # ajustar cuando se cierre el Programa 2
+    FALSE_ALARM = "FALSA_ALARMA"
+    MANUAL_ALARM = "AYUDA_SOLICITADA"
+
+    ONLINE = "ONLINE"
+    OFFLINE = "OFFLINE"
+
+class NessoCommands():
+    START_VIBRATE = "START_VIBRATE"
+    STOP_VIBRATE = "STOP_VIBRATE"
+
+class Conf():
+    TIME_TO_CONFIRM = 15
+    SERVER_IP = "localhost"
+    SERVER_PORT = 1883
+
+    
 
 def get_timestamp():
     t = time.localtime()
@@ -28,6 +45,7 @@ def get_timestamp():
 class mqttHandler():
     client: mqtt.Client
     subscriptions:  dict[str, Callable[[mqtt.MQTTMessage], None]]
+
     def __init__(self) -> None:
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2, # type: ignore
@@ -46,7 +64,7 @@ class mqttHandler():
     def on_connect(self, client, userdata, flags, reason_code: ReasonCode, properties):
         print("connected successfully to the broker! ", reason_code)
         for topic in self.subscriptions:
-            self.client.subscribe(topic, 1)            
+            self.client.subscribe(topic, qos=1)            
             
     def on_disconnect(self, client, userdata, disconnect_flags, reason_code: ReasonCode, properties):
         print("disconnected from the broker rc: ", reason_code)
@@ -57,6 +75,7 @@ class mqttHandler():
                     self.client.reconnect()
                     break
                 except OSError:
+                    time.sleep(3)
                     pass
     
     def start(self, server: str, port: int):
@@ -71,7 +90,7 @@ class mqttHandler():
                 print("Couldn't connect")
         if tries >= 3:
             print("Server down? :(")
-            exit()
+            raise ConnectionError("Could not connect to MQTT broker")
         print("connected successfully!")
 
     def iteration(self):
@@ -84,29 +103,132 @@ class mqttHandler():
         handler = self.subscriptions.get(msg.topic)
         if handler != None:
             handler(msg)
+        else:
+            print("topico no conocido")
     
     def subscribe(self, topic: str, handler: Callable[[mqtt.MQTTMessage], None]):
         self.subscriptions[topic] = handler
+        if self.client.is_connected():
+            self.client.subscribe(topic, qos=1)
 
+    def publish(self, topic: str, payload: str):
+        self.client.publish(topic, payload)
+
+
+class Sources(str, Enum):
+    NESSO = "NESSO"
+    CAMERA = "CAMERA"
+    MANUAL = "MANUAL"
 
 class LogicHandler:
-    MqttH = mqttHandler()
+    MqttH: mqttHandler
+    sources: set 
+
+    waitingConfirmation: bool 
+    sentConfirmationAt: float 
+
+    alarmSent: bool
+
     def __init__(self) -> None:
-        MqttH.subscribe(MQTTopics.CAMERA_01_EVENTS, test)
-        MqttH.subscribe(MQTTopics.NESSO_RESPONSE, test2)
-        MqttH.subscribe(MQTTopics.NESSO_EVENTS, test2)
-        MqttH.start("localhost", 1883)
+        self.MqttH: mqttHandler = mqttHandler()
+        self.sources: set = set()
+        self.waitingConfirmation: bool = False
+        self.sentConfirmationAt: float = 0.0
+        self.alarmSent: bool = False
+        
+        self.MqttH.subscribe(MQTTopics.CAMERA_01_EVENTS, self.cameraEventMSG)
+        self.MqttH.subscribe(MQTTopics.NESSO_EVENTS, self.nessoEventMSG)
+        self.MqttH.subscribe(MQTTopics.NESSO_RESPONSE, self.nessoResponseMSG)
+
+        self.MqttH.subscribe(MQTTopics.NESSO_STATUS, self.checkStatus)
+        self.MqttH.subscribe(MQTTopics.CAMERA_01_STATUS, self.checkStatus)
+
+        self.MqttH.start(Conf.SERVER_IP, Conf.SERVER_PORT)
+
+    # DONE
+    def nessoEventMSG(self, msg: mqtt.MQTTMessage):
+        text = msg.payload.decode()
+
+        if text == Messages.NESSO_FALL: 
+            self.sources.add(Sources.NESSO)
+            print("Nesso fall message received.")
+
+        elif text == Messages.MANUAL_ALARM:
+            self.sources.add(Sources.MANUAL)
+            print("Manual fall message received.")
+        else:
+            self._invalidMSG(msg)
+
+    # DONE
+    def nessoResponseMSG(self, msg: mqtt.MQTTMessage):
+        text = msg.payload.decode()
+        if text == Messages.FALSE_ALARM:
+            if self.waitingConfirmation:
+                print("alarm cancelled by explicit user confirmation")
+                self.sources.clear()
+                self.waitingConfirmation = False
+                self.MqttH.publish(MQTTopics.NESSO_COMMAND, NessoCommands.STOP_VIBRATE)
+            else:
+                print("alarm cancellation received when no waiting confirmation -- ignored")
+        else:
+            self._invalidMSG(msg)
+
+    # DONE
+    def cameraEventMSG(self, msg: mqtt.MQTTMessage):
+        text = msg.payload.decode()
+        if text == Messages.CAMERA_FALL:
+            self.sources.add(Sources.CAMERA)
+            print("Camera fall message received.")
+        else:
+            self._invalidMSG(msg)
+
+    def checkStatus(self, msg: mqtt.MQTTMessage):
+        text = msg.payload.decode()
+        if msg.topic == MQTTopics.NESSO_STATUS:
+            if text == Messages.OFFLINE:
+                print("Nesso is offline. check its connection")
+            elif text == Messages.ONLINE:
+                print("Nesso is online")
+            else:
+                self._invalidMSG(msg)
+
+        if msg.topic == MQTTopics.CAMERA_01_STATUS:
+            if text == Messages.OFFLINE:
+                print("Camera is offline. check its connection")
+            elif text == Messages.ONLINE:
+                print("Camera is online")
+            else:
+                self._invalidMSG(msg)
+
+    def sendRealAlarm(self):
+        print(f"REAL ALARM has been sent at {get_timestamp()}")
+
+    def _invalidMSG(self, msg: mqtt.MQTTMessage):
+        print("invalid message received at topic: ", msg.topic)
+        print("payload: ", msg.payload)
 
 
-def test(msg: mqtt.MQTTMessage):
-    print("message arribed (camera event): ", msg.payload)
+    def main(self):
+        while True:
+            self.MqttH.iteration()
+            now = time.time()
 
-def test2(msg: mqtt.MQTTMessage):
-    print("message arribed (camera event): ", msg.payload)
+            # a source is telling about a fall and no confirmation has been sent?
+            if self.sources and not self.waitingConfirmation:
+                self.waitingConfirmation = True
+                self.sentConfirmationAt = now
+                self.MqttH.publish(MQTTopics.NESSO_COMMAND, NessoCommands.START_VIBRATE)
+                print(f"confirmation has been sent at {get_timestamp()}")
 
-MqttH = mqttHandler()
-MqttH.subscribe(MQTTopics.CAMERA_01_EVENTS, test)
-MqttH.subscribe(MQTTopics.NESSO_EVENTS, test2)
-MqttH.start("localhost", 1883)
-while True:
-    MqttH.iteration()
+            # a confirmation has been sent and after TIME_TO_CONFIRM seconds no respone? while no real alarm has been sent?
+            if self.waitingConfirmation and not self.alarmSent and now - self.sentConfirmationAt >= Conf.TIME_TO_CONFIRM:
+                self.alarmSent = True
+                self.sendRealAlarm()
+
+                # LIMPIAR ESTADO para continuar funcionando
+                self.sources.clear()
+                self.waitingConfirmation = False
+                self.alarmSent = False
+Program = LogicHandler()
+Program.main()
+# comprobado que las cosas de abajo funcionan
