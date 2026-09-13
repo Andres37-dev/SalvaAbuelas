@@ -8,19 +8,18 @@ import time
 
 class MQTTopics():
     NESSO_EVENTS = "Nesso/events"
-    NESSO_STATUS = "Nesso/status"           # FUTURE IMPLEMENTATION
+    NESSO_STATUS = "Nesso/status"           
 
     NESSO_COMMAND = "Nesso/command"
-    NESSO_RESPONSE = "Nesso/response"
 
     CAMERA_01_EVENTS = "Cameras/01/events"  
-    CAMERA_01_STATUS = "Cameras/01/status"  # FUTURE IMPLEMENTATION
+    CAMERA_01_STATUS = "Cameras/01/status"  
 
 class Messages():
     NESSO_FALL = "ANOMALIA_DETECTADA"        
     CAMERA_FALL = "CAIDA_DETECTADA"          # ajustar cuando se cierre el Programa 2
     FALSE_ALARM = "FALSA_ALARMA"
-    MANUAL_ALARM = "AYUDA_SOLICITADA"
+    MANUAL_ALARM = "AYUDA_SOLICITADA"          # n
 
     ONLINE = "ONLINE"
     OFFLINE = "OFFLINE"
@@ -34,7 +33,6 @@ class Conf():
     SERVER_IP = "localhost"
     SERVER_PORT = 1883
 
-    
 
 def get_timestamp():
     t = time.localtime()
@@ -138,7 +136,6 @@ class LogicHandler:
         
         self.MqttH.subscribe(MQTTopics.CAMERA_01_EVENTS, self.cameraEventMSG)
         self.MqttH.subscribe(MQTTopics.NESSO_EVENTS, self.nessoEventMSG)
-        self.MqttH.subscribe(MQTTopics.NESSO_RESPONSE, self.nessoResponseMSG)
 
         self.MqttH.subscribe(MQTTopics.NESSO_STATUS, self.checkStatus)
         self.MqttH.subscribe(MQTTopics.CAMERA_01_STATUS, self.checkStatus)
@@ -156,13 +153,8 @@ class LogicHandler:
         elif text == Messages.MANUAL_ALARM:
             self.sources.add(Sources.MANUAL)
             print("Manual fall message received.")
-        else:
-            self._invalidMSG(msg)
 
-    # DONE
-    def nessoResponseMSG(self, msg: mqtt.MQTTMessage):
-        text = msg.payload.decode()
-        if text == Messages.FALSE_ALARM:
+        elif text == Messages.FALSE_ALARM:
             if self.waitingConfirmation:
                 print("alarm cancelled by explicit user confirmation")
                 self.sources.clear()
@@ -172,7 +164,6 @@ class LogicHandler:
                 print("alarm cancellation received when no waiting confirmation -- ignored")
         else:
             self._invalidMSG(msg)
-
     # DONE
     def cameraEventMSG(self, msg: mqtt.MQTTMessage):
         text = msg.payload.decode()
@@ -214,7 +205,7 @@ class LogicHandler:
             now = time.time()
 
             # a source is telling about a fall and no confirmation has been sent?
-            if self.sources and not self.waitingConfirmation:
+            if Sources.CAMERA in self.sources and not self.waitingConfirmation:
                 self.waitingConfirmation = True
                 self.sentConfirmationAt = now
                 self.MqttH.publish(MQTTopics.NESSO_COMMAND, NessoCommands.START_VIBRATE)
@@ -229,6 +220,17 @@ class LogicHandler:
                 self.sources.clear()
                 self.waitingConfirmation = False
                 self.alarmSent = False
+
+            # manual alarm or nesso has been triggered?
+            if (Sources.MANUAL in self.sources or Sources.NESSO in self.sources) and not self.alarmSent:
+                self.alarmSent = True
+                self.sendRealAlarm()
+
+                # LIMPIAR ESTADO para continuar funcionando
+                self.sources.clear()
+                self.waitingConfirmation = False
+                self.alarmSent = False
+
 Program = LogicHandler()
 Program.main()
 # comprobado que las cosas de abajo funcionan
