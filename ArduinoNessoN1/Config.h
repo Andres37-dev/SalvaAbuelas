@@ -22,13 +22,13 @@ extern PubSubClient mqttClient;
 extern const char* wifi_ssid;
 extern const char* wifi_password;
 
-const char* MQTT_BROKER    = "?????";   // fill in your broker's IP/hostname
-const int   MQTT_PORT      = 1883;
-const char* MQTT_CLIENT_ID = "Nesso";
+constexpr const char* MQTT_BROKER    = "?????";   // fill in your broker's IP/hostname
+constexpr const int   MQTT_PORT      = 1883;
+constexpr const char* MQTT_CLIENT_ID = "Nesso";
 
-const char* MQTT_TOPIC_STATUS  = "Nesso/status";
-const char* MQTT_TOPIC_COMMAND = "Nesso/command";
-const char* MQTT_TOPIC_EVENTS  = "Nesso/events";
+constexpr const char* MQTT_TOPIC_STATUS  = "Nesso/status";
+constexpr const char* MQTT_TOPIC_COMMAND = "Nesso/command";
+constexpr const char* MQTT_TOPIC_EVENTS  = "Nesso/events";
 
 
 const unsigned int SCREEN_ROTATION = 0; // {0..3} 0 vertical KEY1 on the button, keeps rotating 90º to the right
