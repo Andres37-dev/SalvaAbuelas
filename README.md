@@ -56,3 +56,11 @@ Then, the logic to detect a fall is straightforward. There are some various case
 - The head being under other parts of the body (except hands or wrists).
 - A sudden variation of both torso length and angle.
 
+## Credits
+
+To build our project we have used:
+
+- [MoveNet model and code examples](https://www.tensorflow.org/hub/tutorials/movenet), under the Creative Commons Attribution 4.0 License.
+
+- The Arduino Python package.
+
