@@ -2,8 +2,10 @@
 #define CONFIG_H
 
 #include <Arduino_Nesso_N1.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
 
-#define FIRMWARE_VERSION "v3.7.2"
+#define FIRMWARE_VERSION "v4.0.0"
 #define SERIAL_ENABLED false
 
 #ifndef BEEP_PIN // just in case since it once gave me problems
@@ -13,8 +15,21 @@
 extern NessoBattery battery;
 extern NessoDisplay display;
 
+extern WiFiClient wifiClient;
+extern PubSubClient mqttClient;
+
+
 extern const char* wifi_ssid;
 extern const char* wifi_password;
+
+const char* MQTT_BROKER    = "?????";   // fill in your broker's IP/hostname
+const int   MQTT_PORT      = 1883;
+const char* MQTT_CLIENT_ID = "Nesso";
+
+const char* MQTT_TOPIC_STATUS  = "Nesso/Status";
+const char* MQTT_TOPIC_COMMAND = "Nesso/command";
+const char* MQTT_TOPIC_EVENTS  = "Nesso/events";
+
 
 const unsigned int SCREEN_ROTATION = 0; // {0..3} 0 vertical KEY1 on the button, keeps rotating 90º to the right
 const unsigned int SCREEN_HEIGHT = (SCREEN_ROTATION % 2 == 0) ? 240 : 135;
@@ -83,7 +98,7 @@ const float VSWING_FLOOR_G = 0.30f, VSWING_CEIL_G = 2.50f, VSWING_MAX_PTS = 30.0
 
 // --- The single decision threshold. At or above this score, the confirmation grace period ALWAYS activates. Below it, the
 //     episode is ignored. Lower catches more soft falls but nags more often; higher does the opposite.
-const float CONFIRMATION_THRESHOLD_PCT = 45.0f;
+const float CONFIRMATION_THRESHOLD_PCT = 55.0f;
 
 // How long the "are you OK?" grace period lasts before auto-escalating.
 const unsigned long CONFIRMATION_GRACE_MS = 20000;
@@ -101,7 +116,7 @@ const unsigned long KEY_DEBOUNCE_MS     = 40;
 const unsigned int KEY_BEEP_FREQ_HZ     = 500;
 const unsigned int KEY_BEEP_DURATION_MS = 100;
 
-const unsigned long MANUAL_ALARM_MS = 2000; // time needed to trigger manual alarm
+const unsigned long MANUAL_ALARM_MS = 3000; // time needed to trigger manual alarm
 
 
 #endif

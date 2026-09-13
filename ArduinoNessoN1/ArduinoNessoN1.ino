@@ -7,6 +7,8 @@
 
 NessoBattery battery;
 NessoDisplay display;
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
 
 const char* wifi_ssid = "...";
 const char* wifi_password = "...";
@@ -169,7 +171,6 @@ bool keyPressed(ExpanderPin key) {
 // ============================================================
 // Calculate orientation from accelerometer
 // ============================================================
-
 void calculateAccelerometerAngles(float accX, float accY, float accZ, float &newRoll, float &newPitch) {
   newRoll = atan2f(accY, accZ) * 180.0f / PI;
   newPitch = atan2f(-accX, sqrtf(accY * accY + accZ * accZ)) * 180.0f / PI;
@@ -179,7 +180,6 @@ void calculateAccelerometerAngles(float accX, float accY, float accZ, float &new
 // ============================================================
 // Complementary filter
 // ============================================================
-
 void updateOrientation(float accX, float accY, float accZ, float gyrX, float gyrY, float dt) {
   float accelRoll, accelPitch;
   calculateAccelerometerAngles(accX, accY, accZ, accelRoll, accelPitch);
@@ -199,7 +199,6 @@ void updateOrientation(float accX, float accY, float accZ, float gyrX, float gyr
 // How much has orientation moved since the episode started?
 // Returns the larger of the roll/pitch swings, in degrees.
 // ============================================================
-
 float orientationChangeDegrees() {
   float rollChange = fabsf(normalizeAngle(roll - initialRoll));
   float pitchChange = fabsf(normalizeAngle(pitch - initialPitch));
@@ -213,7 +212,6 @@ float orientationChangeDegrees() {
 // Uses the CURRENT fused roll/pitch, so it tracks "down" as the
 // device rotates instead of reading a fixed sensor axis.
 // ============================================================
-
 float verticalAccelComponent(float accX, float accY, float accZ, float rollDeg, float pitchDeg) {
   float r = rollDeg * PI / 180.0f;
   float p = pitchDeg * PI / 180.0f;
@@ -231,7 +229,6 @@ float verticalAccelComponent(float accX, float accY, float accZ, float rollDeg, 
 // ============================================================
 // Episode lifecycle
 // ============================================================
-
 void startEvent() {
   state = EVENT_DETECTED;
   episodeStartTime = millis();
@@ -328,7 +325,7 @@ void resolveEpisode() {
   DBG_PRINT("  TOTAL SCORE: "); DBG_PRINT(total, 0); DBG_PRINTLN("%");
 
   if (total >= CONFIRMATION_THRESHOLD_PCT) {
-    startConfirmation(total); // TODO: ha d'enviar el total per MQTT
+    startConfirmation(total);
   } else {
     DBG_PRINTLN(">>> Below confirmation threshold - resuming normal monitoring.");
     resetToNormal();
@@ -339,7 +336,6 @@ void resolveEpisode() {
 // ============================================================
 // Confirmation ("Are you OK?") grace period
 // ============================================================
-
 void startConfirmation(float score) {
   state = CONFIRMING;
   confirmStartTime = millis();
@@ -357,8 +353,9 @@ void startConfirmation(float score) {
 // ============================================================
 // Trigger fall alarm
 // ============================================================
-
 void triggerAlarm(float score) {
+  mqttClient.publish(MQTT_TOPIC_EVENTS, "ANOMALIA_DETECTADA");
+
   state = ALARM;
   lastAlarmBeep = 0;
 
@@ -376,7 +373,6 @@ void triggerAlarm(float score) {
 // ============================================================
 // Reset detector to idle / monitoring
 // ============================================================
-
 void resetToNormal() {
   state = NORMAL;
   noTone(BEEP_PIN);
@@ -389,9 +385,36 @@ void resetToNormal() {
 
 
 // ============================================================
+// MQTT helpers
+// ============================================================
+void ensureMqttConnected() {
+  mqttClient.loop();
+
+  if (!mqttClient.connected()) {
+    static unsigned long lastReconnectAttempt = 0;
+    if (millis() - lastReconnectAttempt > 2000) {   // don't retry more than every 2s
+      lastReconnectAttempt = millis();
+      if (mqttClient.connect(MQTT_CLIENT_ID, MQTT_TOPIC_STATUS, 0, true, "OFFLINE")) {
+        mqttClient.publish(MQTT_TOPIC_STATUS, "ONLINE", true);
+        mqttClient.subscribe(MQTT_TOPIC_COMMAND);
+      }
+    }
+  }
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String msg;
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+
+  if (String(topic) == MQTT_TOPIC_COMMAND) {
+    if (msg == "START_VIBRATE") startConfirmation(100);
+    else if (msg == "STOP_VIBRATE") noTone(BEEP_PIN);
+  }
+}
+
+// ============================================================
 // SETUP
 // ============================================================
-
 void setup() {
   DBG_BEGIN(115200);
   delay(1000);
@@ -419,6 +442,13 @@ void setup() {
     }
   }
   DBG_PRINTLN("BMI270 IMU detected.");
+
+  WiFi.begin(wifi_ssid, wifi_password);
+  while (WiFi.status() != WL_CONNECTED) { delay(200); DBG_PRINT("."); }
+  DBG_PRINTLN("WiFi connected.");
+
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+  mqttClient.setCallback(mqttCallback);   // defined below
 
   resetToNormal();
   previousMicros = micros();
@@ -490,10 +520,7 @@ void loop() {
   } 
   else buttonStillPressed = manualTriggerFiredThisHold = false;
 
-  /* TODO: potser mirar aixo cada 0.5-1s
-  if (MQTT ens diu que comencem confirmacio)
-    startConfirmation()
-  */
+  ensureMqttConnected();
 
   // ========================================================
   // STATE MACHINE
