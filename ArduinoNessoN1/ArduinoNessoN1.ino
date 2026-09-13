@@ -7,8 +7,10 @@
 
 NessoBattery battery;
 NessoDisplay display;
+
 const char* wifi_ssid = "...";
 const char* wifi_password = "...";
+
 
 #if SERIAL_ENABLED
   #define DBG_BEGIN(...)   Serial.begin(__VA_ARGS__)
@@ -19,6 +21,7 @@ const char* wifi_password = "...";
   #define DBG_PRINT(...)
   #define DBG_PRINTLN(...)
 #endif
+
 
 void startEvent();
 void trackEpisodeExtremes(float accelMag, float gyroMag, float verticalAccel);
@@ -114,15 +117,16 @@ float scoreFromRange(float value, float floorVal, float ceilingVal, float maxPoi
   return t * maxPoints;
 }
 
-// Aux func to make key1 readings easier (debounce + flanc asc)
+// Aux func to make key1 readings easier (debounce + flanc asc + pito)
 bool key1Pressed() {
   bool raw = digitalRead(KEY1);
   bool justPressed = false;
 
   if (raw != key1LastRaw) {
-    if (millis() - key1LastChangeTime > KEY1_DEBOUNCE_MS) {
+    if (millis() - key1LastChangeTime > KEY_DEBOUNCE_MS) {
       if (raw == LOW && key1LastRaw == HIGH) { // flanc asc
         justPressed = true;
+        tone(BEEP_PIN, KEY_BEEP_FREQ_HZ, KEY_BEEP_DURATION_MS);
       }
       key1LastRaw = raw;
       key1LastChangeTime = millis();
@@ -288,7 +292,7 @@ void resolveEpisode() {
   DBG_PRINT("  TOTAL SCORE: "); DBG_PRINT(total, 0); DBG_PRINTLN("%");
 
   if (total >= CONFIRMATION_THRESHOLD_PCT) {
-    startConfirmation(total);
+    startConfirmation(total); // TODO: ha d'enviar el total per MQTT
   } else {
     DBG_PRINTLN(">>> Below confirmation threshold - resuming normal monitoring.");
     resetToNormal();
@@ -306,9 +310,7 @@ void startConfirmation(float score) {
   lastConfirmBeep = 0;
   lastDisplayedCountdown = -1;
 
-  DBG_PRINT(">>> POSSIBLE FALL (");
-  DBG_PRINT(score, 0);
-  DBG_PRINTLN("%) - awaiting confirmation");
+  DBG_PRINT(">>> POSSIBLE FALL ("); DBG_PRINT(score, 0); DBG_PRINTLN("%) - awaiting confirmation");
 
   confirmationScreen((int) score);
 }
@@ -324,9 +326,7 @@ void triggerAlarm(float score) {
 
   DBG_PRINTLN();
   DBG_PRINTLN("================================");
-  DBG_PRINT("   FALL DETECTED! (");
-  DBG_PRINT(score, 0);
-  DBG_PRINTLN("%)");
+  DBG_PRINT("   FALL DETECTED! ("); DBG_PRINT(score, 0); DBG_PRINTLN("%)");
   DBG_PRINTLN("================================");
 
   alarmScreen((int) score);
@@ -356,14 +356,12 @@ void setup() {
   delay(1000);
 
   battery.begin();
+  display.begin();
 
   DBG_PRINTLN();
   DBG_PRINTLN("==============================");
   DBG_PRINT("Nesso N1 Fall Detector "); DBG_PRINTLN(FIRMWARE_VERSION);
   DBG_PRINTLN("==============================");
-
-  display.begin();
-  display.setRotation(1);  // 240x135 landscape
 
   pinMode(BEEP_PIN, OUTPUT);
   pinMode(KEY1, INPUT_PULLUP);
@@ -440,6 +438,10 @@ void loop() {
   } 
   else buttonStillPressed = manualTriggerFiredThisHold = false;
 
+  /* TODO: potser mirar aixo cada 0.5-1s
+  if (MQTT ens diu que comencem confirmacio)
+    startConfirmation()
+  */
 
   // ========================================================
   // STATE MACHINE
@@ -456,6 +458,7 @@ void loop() {
       }
       break;
     }
+
     // EVENT_DETECTED: collect evidence for EVENT_WINDOW_MS
     case EVENT_DETECTED: {
       trackEpisodeExtremes(accelerationMagnitude, gyroMagnitude, verticalAccel);
@@ -465,12 +468,12 @@ void loop() {
       }
       break;
     }
+
     // STILLNESS_WAIT: watch for the person to settle, then score
     case STILLNESS_WAIT: {
       trackEpisodeExtremes(accelerationMagnitude, gyroMagnitude, verticalAccel);
 
-      bool quietNow = (fabsf(accelerationMagnitude - 1.0f) < QUIET_ACCEL_BAND_G)
-                      && (gyroMagnitude < QUIET_GYRO_DPS);
+      bool quietNow = (fabsf(accelerationMagnitude - 1.0f) < QUIET_ACCEL_BAND_G) && (gyroMagnitude < QUIET_GYRO_DPS);
 
       if (quietNow) {
         if (quietStreakStart == 0) quietStreakStart = millis();
@@ -488,12 +491,13 @@ void loop() {
       }
       break;
     }
+
     // CONFIRMING: "Are you OK?" grace period -- always entered once the score reaches CONFIRMATION_THRESHOLD_PCT.
     case CONFIRMING: {
       if (key1JustPressed) {
         DBG_PRINTLN("KEY1 pressed - user cancelled, false alarm.");
         noTone(BEEP_PIN);
-        resetToNormal();
+        resetToNormal(); // TODO: enviar per MQTT que s'ha cancelat 
         break;
       }
 
@@ -504,19 +508,7 @@ void loop() {
       }
 
       // Update the on-screen countdown once per second, not every loop.
-      unsigned long elapsed = millis() - confirmStartTime;
-      int secondsLeft = (int)((CONFIRMATION_GRACE_MS - elapsed) / 1000);
-      if (secondsLeft < 0) secondsLeft = 0;
-      if (secondsLeft != lastDisplayedCountdown) {
-        lastDisplayedCountdown = secondsLeft;
-        display.fillRect(10, 65, 220, 16, TFT_ORANGE);
-        display.setTextColor(TFT_BLACK);
-        display.setTextSize(1);
-        display.setCursor(10, 65);
-        display.print("Cancel in: ");
-        display.print(secondsLeft);
-        display.println("s");
-      }
+      unsigned long elapsed = updateConfirmationScreen(confirmStartTime, lastDisplayedCountdown);
 
       if (elapsed >= CONFIRMATION_GRACE_MS) {
         DBG_PRINTLN("No response during grace period - escalating to full alarm.");
@@ -524,6 +516,7 @@ void loop() {
       }
       break;
     }
+
     // ALARM: stay active, re-beeping, until KEY1 cancels
     case ALARM: {
       if (key1JustPressed) {
@@ -546,18 +539,13 @@ void loop() {
     if (millis() - lastPrint > 200) {
       lastPrint = millis();
 
-      DBG_PRINT("A=");
-      DBG_PRINT(accelerationMagnitude, 2);
-      DBG_PRINT("  G=");
-      DBG_PRINT(gyroMagnitude, 1);
-      DBG_PRINT("  VA=");
-      DBG_PRINT(verticalAccel, 2);
-      DBG_PRINT("  Roll=");
-      DBG_PRINT(roll, 1);
-      DBG_PRINT("  Pitch=");
-      DBG_PRINT(pitch, 1);
-      DBG_PRINT("  State=");
+      DBG_PRINT("A="); DBG_PRINT(accelerationMagnitude, 2);
+      DBG_PRINT("  G="); DBG_PRINT(gyroMagnitude, 1);
+      DBG_PRINT("  VA="); DBG_PRINT(verticalAccel, 2);
+      DBG_PRINT("  Roll="); DBG_PRINT(roll, 1);
+      DBG_PRINT("  Pitch="); DBG_PRINT(pitch, 1);
       
+      DBG_PRINT("  State=");
       switch (state) {
         case NORMAL:          DBG_PRINT("NORMAL"); break;
         case EVENT_DETECTED:  DBG_PRINT("EVENT_DETECTED"); break;
@@ -569,19 +557,12 @@ void loop() {
       // While an episode is active, show the running evidence too --
       // useful for tuning the thresholds above.
       if (state == EVENT_DETECTED || state == STILLNESS_WAIT) {
-        DBG_PRINT("  [min=");
-        DBG_PRINT(episodeMinAccel, 2);
-        DBG_PRINT(" max=");
-        DBG_PRINT(episodeMaxAccel, 2);
-        DBG_PRINT(" maxG=");
-        DBG_PRINT(episodeMaxGyro, 0);
-        DBG_PRINT(" VAmin=");
-        DBG_PRINT(episodeMinVerticalAccel, 2);
-        DBG_PRINT(" VAmax=");
-        DBG_PRINT(episodeMaxVerticalAccel, 2);
-        DBG_PRINT(" quiet=");
-        DBG_PRINT(longestQuietStreakMs);
-        DBG_PRINT("ms]");
+        DBG_PRINT("  [min="); DBG_PRINT(episodeMinAccel, 2);
+        DBG_PRINT(" max="); DBG_PRINT(episodeMaxAccel, 2);
+        DBG_PRINT(" maxG="); DBG_PRINT(episodeMaxGyro, 0);
+        DBG_PRINT(" VAmin="); DBG_PRINT(episodeMinVerticalAccel, 2);
+        DBG_PRINT(" VAmax="); DBG_PRINT(episodeMaxVerticalAccel, 2);
+        DBG_PRINT(" quiet="); DBG_PRINT(longestQuietStreakMs); DBG_PRINT("ms]");
       }
       
       DBG_PRINTLN();

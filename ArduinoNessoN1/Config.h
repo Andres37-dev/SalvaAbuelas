@@ -3,7 +3,7 @@
 
 #include <Arduino_Nesso_N1.h>
 
-#define FIRMWARE_VERSION "v3.6"
+#define FIRMWARE_VERSION "v3.7.1"
 #define SERIAL_ENABLED false
 
 #ifndef BEEP_PIN // per si un cas, ja que alguna vegada em va donar algun error
@@ -15,6 +15,10 @@ extern NessoDisplay display;
 
 extern const char* wifi_ssid;
 extern const char* wifi_password;
+
+const unsigned int SCREEN_ROTATION = 0; // {0..3} 0 vertical KEY1 on the button, keeps rotating 90º to the right
+const unsigned int SCREEN_HEIGHT = (SCREEN_ROTATION % 2 == 0) ? 240 : 135;
+const unsigned int SCREEN_WIDTH  = (SCREEN_ROTATION % 2 == 1) ? 135 : 240;
 
 
 // ---- Constants ----
@@ -67,7 +71,6 @@ const float STILLNESS_MAX_PTS  = 15.0f;
 //     (highest minus lowest value seen) across the episode, since a real fall shows both ends of that range and a rotation shows
 //     neither.
 const float VSWING_FLOOR_G = 0.30f, VSWING_CEIL_G = 2.50f, VSWING_MAX_PTS = 30.0f;
-// (10 + 10 + 5 + 30 + 15 + 30 = 100 -- the score IS the percentage.)
 
 // --- The single decision threshold. At or above this score, the confirmation grace period ALWAYS activates. Below it, the
 //     episode is ignored. Lower catches more soft falls but nags more often; higher does the opposite.
@@ -78,16 +81,18 @@ const unsigned long CONFIRMATION_GRACE_MS = 20000;
 
 // Buzzer behavior. BEEP_PIN (GPIO11) comes from the Nesso N1 board definition, not this sketch.
 const unsigned int CONFIRM_BEEP_FREQ_HZ    = 2000;
-const unsigned int CONFIRM_BEEP_DURATION_MS = 100;
-const unsigned long CONFIRM_BEEP_INTERVAL_MS = 1500;  // nag every 1.5s
+const unsigned int CONFIRM_BEEP_DURATION_MS = 150;
+const unsigned long CONFIRM_BEEP_INTERVAL_MS = 500;
 
 const unsigned int ALARM_BEEP_FREQ_HZ     = 1000;
 const unsigned int ALARM_BEEP_DURATION_MS = 1000;
-const unsigned long ALARM_BEEP_INTERVAL_MS = 1200;  // re-beep so it's a real alarm
+const unsigned long ALARM_BEEP_INTERVAL_MS = 1200;
 
-// Debounce for KEY1 (it's polled over I2C, not a hardware interrupt).
-const unsigned long KEY1_DEBOUNCE_MS = 40;
+const unsigned long KEY_DEBOUNCE_MS     = 40;
+const unsigned int KEY_BEEP_FREQ_HZ     = 500;
+const unsigned int KEY_BEEP_DURATION_MS = 100;
 
-const unsigned long MANUAL_ALARM_MS = 2000;
+const unsigned long MANUAL_ALARM_MS = 2000; // time needed to trigger manual alarm
+
 
 #endif
