@@ -1,7 +1,9 @@
 import paho.mqtt.client as mqtt
 from paho.mqtt.reasoncodes import ReasonCode
 from collections.abc import Callable
-
+import os
+import smtplib
+from email.message import EmailMessage
 from enum import Enum
 import time
 
@@ -32,6 +34,12 @@ class Conf():
     TIME_TO_CONFIRM = 15
     SERVER_IP = "localhost"
     SERVER_PORT = 1883
+    
+    SMTP_SERVER = "smtp.gmail.com"
+    SMTP_PORT = 465
+    EMAIL_FROM = "emergencyalert37@gmail.com"
+    EMAIL_PASSWORD = "obaqlnqeggitltps"
+    EMAIL_TO = "anpoca05@gmail.com"
 
 
 def get_timestamp():
@@ -192,7 +200,33 @@ class LogicHandler:
                 self._invalidMSG(msg)
 
     def sendRealAlarm(self):
-        print(f"REAL ALARM has been sent at {get_timestamp()}")
+        timestamp = get_timestamp()
+        print(f"REAL ALARM triggered at {timestamp}")
+    
+        msg = EmailMessage()
+        msg["Subject"] = "REAL ALARM"
+        msg["From"] = Conf.EMAIL_FROM
+        msg["To"] = Conf.EMAIL_TO
+    
+        msg.set_content(
+            f"""REAL ALARM
+    
+            An alarm has been triggered.
+    
+            Time: {timestamp}
+    
+            Please check the situation immediately.
+            """
+        )
+    
+        try:
+            with smtplib.SMTP_SSL(Conf.SMTP_SERVER, Conf.SMTP_PORT) as smtp:
+                smtp.login(Conf.EMAIL_FROM, Conf.EMAIL_PASSWORD)
+                smtp.send_message(msg)
+            print(f"REAL ALARM email sent at {timestamp}")
+    
+        except Exception as e:
+            print(f"ERROR: Could not send REAL ALARM email: {e}")
 
     def _invalidMSG(self, msg: mqtt.MQTTMessage):
         print("invalid message received at topic: ", msg.topic)
