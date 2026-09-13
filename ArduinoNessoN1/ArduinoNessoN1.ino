@@ -10,9 +10,6 @@ NessoDisplay display;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-const char* wifi_ssid = "...";
-const char* wifi_password = "...";
-
 
 #if SERIAL_ENABLED
   #define DBG_BEGIN(...)   Serial.begin(__VA_ARGS__)
@@ -456,11 +453,21 @@ void setup() {
   DBG_PRINTLN("BMI270 IMU detected.");
 
   WiFi.begin(wifi_ssid, wifi_password);
-  while (WiFi.status() != WL_CONNECTED) { delay(200); DBG_PRINT("."); }
-  DBG_PRINTLN("WiFi connected.");
+  int tries = 0; bool tryInfinitely = true;
+  while (WiFi.status() != WL_CONNECTED && (tryInfinitely || (tries < 200 && !tryInfinitely))) { 
+    delay(200); 
+    DBG_PRINT("."); 
+    tries++;
+  }
+  if (tries < 200) { 
+    DBG_PRINTLN("WiFi connected.");
+  } 
+  else { 
+    DBG_PRINTLN("!!! WiFi not connected !!!");
+  }
 
   mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
-  mqttClient.setCallback(mqttCallback);   // defined below
+  mqttClient.setCallback(mqttCallback);
 
   resetToNormal();
   previousMicros = micros();
@@ -471,7 +478,6 @@ void setup() {
 // ============================================================
 // LOOP
 // ============================================================
-
 void loop() {
   bool haveNewAccel = false;
 
@@ -531,8 +537,12 @@ void loop() {
     }
   } 
   else buttonStillPressed = manualTriggerFiredThisHold = false;
-
-  ensureMqttConnected();
+  
+  static unsigned long lastMqttCheck = 0;
+  if (millis() - lastMqttCheck > 1000) {
+    lastMqttCheck = millis();
+    ensureMqttConnected();
+  }
 
   // ========================================================
   // STATE MACHINE

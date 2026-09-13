@@ -5,8 +5,8 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-#define FIRMWARE_VERSION "v4.0.4"
-#define SERIAL_ENABLED false
+#define FIRMWARE_VERSION "v4.1.2"
+#define SERIAL_ENABLED true
 
 #ifndef BEEP_PIN // just in case since it once gave me problems
 #define BEEP_PIN 11
@@ -19,10 +19,10 @@ extern WiFiClient wifiClient;
 extern PubSubClient mqttClient;
 
 
-extern const char* wifi_ssid;
-extern const char* wifi_password;
+constexpr const char* wifi_ssid     = "...";
+constexpr const char* wifi_password = "...";
 
-constexpr const char* MQTT_BROKER    = "?????";   // fill in your broker's IP/hostname
+constexpr const char* MQTT_BROKER    = "?????";
 constexpr const int   MQTT_PORT      = 1883;
 constexpr const char* MQTT_CLIENT_ID = "Nesso";
 
