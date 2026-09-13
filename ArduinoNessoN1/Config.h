@@ -5,7 +5,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-#define FIRMWARE_VERSION "v4.0.0"
+#define FIRMWARE_VERSION "v4.0.4"
 #define SERIAL_ENABLED false
 
 #ifndef BEEP_PIN // just in case since it once gave me problems
@@ -26,7 +26,7 @@ const char* MQTT_BROKER    = "?????";   // fill in your broker's IP/hostname
 const int   MQTT_PORT      = 1883;
 const char* MQTT_CLIENT_ID = "Nesso";
 
-const char* MQTT_TOPIC_STATUS  = "Nesso/Status";
+const char* MQTT_TOPIC_STATUS  = "Nesso/status";
 const char* MQTT_TOPIC_COMMAND = "Nesso/command";
 const char* MQTT_TOPIC_EVENTS  = "Nesso/events";
 

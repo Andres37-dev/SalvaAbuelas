@@ -3,7 +3,7 @@ NESSO:
     Port = 1883
 
     Publicar el siguiente mensaje nadamas conectarse al servidor:
-        topic   : Nesso/Status
+        topic   : Nesso/status
         payload : ONLINE
         retain = True
 
@@ -14,6 +14,10 @@ NESSO:
     Cuando detecta caida:
         topic   : Nesso/events
         payload : ANOMALIA_DETECTADA
+        
+    Cuando camara detecta caida, nesso confirma que no lo es:
+        topic   : Nesso/events
+        payload : FALSA_ALARMA
 
     Configurar last Will Testament:
         topic   : Nesso/Status

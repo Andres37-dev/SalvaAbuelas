@@ -45,6 +45,9 @@ enum FallState {
 
 FallState state = NORMAL;
 
+bool confirmationFromMQTT = false;
+bool alreadyConfirming = false;
+
 unsigned long batteryScreenStartTime = 0;
 bool nonBatteryScreenOn = false;
 bool batteryScreenOn = false;
@@ -325,7 +328,10 @@ void resolveEpisode() {
   DBG_PRINT("  TOTAL SCORE: "); DBG_PRINT(total, 0); DBG_PRINTLN("%");
 
   if (total >= CONFIRMATION_THRESHOLD_PCT) {
-    startConfirmation(total);
+    if (!alreadyConfirming) {
+      alreadyConfirming = true;
+      startConfirmation(total);
+    }
   } else {
     DBG_PRINTLN(">>> Below confirmation threshold - resuming normal monitoring.");
     resetToNormal();
@@ -407,7 +413,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
 
   if (String(topic) == MQTT_TOPIC_COMMAND) {
-    if (msg == "START_VIBRATE") startConfirmation(100);
+    if (msg == "START_VIBRATE") {
+      confirmationFromMQTT = true; 
+      if (!alreadyConfirming) {
+        alreadyConfirming = true;
+        startConfirmation(100);
+      }
+    }
     else if (msg == "STOP_VIBRATE") noTone(BEEP_PIN);
   }
 }
@@ -576,8 +588,12 @@ void loop() {
     case CONFIRMING: {
       if (key1JustPressed) {
         DBG_PRINTLN("KEY1 pressed - user cancelled, false alarm.");
+        
+        if (confirmationFromMQTT) mqttClient.publish(MQTT_TOPIC_EVENTS, "FALSA_ALARMA");
+        confirmationFromMQTT = alreadyConfirming = false;
+
         noTone(BEEP_PIN);
-        resetToNormal(); // TODO: enviar per MQTT que s'ha cancelat 
+        resetToNormal(); // TODO: enviar per MQTT que s'ha cancelat
         break;
       }
 
@@ -592,6 +608,7 @@ void loop() {
 
       if (elapsed >= CONFIRMATION_GRACE_MS) {
         DBG_PRINTLN("No response during grace period - escalating to full alarm.");
+        confirmationFromMQTT = alreadyConfirming = false;
         triggerAlarm(lastFallScore);
       }
       break;
