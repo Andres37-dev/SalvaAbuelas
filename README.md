@@ -60,7 +60,7 @@ Then, the logic to detect a fall is straightforward. There are some various case
 
 To build our project we have used:
 
-- [MoveNet model and code examples](https://www.tensorflow.org/hub/tutorials/movenet), under the s Creative Commons Attribution 4.0 License.
+- [MoveNet model and code examples](https://www.tensorflow.org/hub/tutorials/movenet), under the Creative Commons Attribution 4.0 License.
 
 - The Arduino Python package.
 
