@@ -38,7 +38,7 @@ FRAME_INTERVAL = 1.0 / FPS
 
 # Decision making --------------------------------------------------------------
 
-MIN_CONFIDENCE = 0.30
+MIN_CONFIDENCE = 0.20
 """Minimum confidence needed to consider a person as detected.
 This value must be between 0 and 1.
 - The larger it is, the harder it is to detect someone. That could reduce false positives in exchange for false negatives."""
@@ -50,6 +50,36 @@ ANGLE_THRESHOLD = 30.0
 0°   = vertical torso
 90°  = horizontal torso
 """
+
+TORSO_TO_SHOULDERS_RATIO = 0.80
+"""
+A person standing normally will usually have a torso/shoulder ratio
+comfortably above 0.80. Increase it only if we
+are missing genuine falls.
+"""
+
+CHANGE_WINDOW = 3
+"""Number of consecutive frames used to decide whether a change is real."""
+
+
+SUDDEN_ANGLE_CHANGE = 25.0
+"""
+Minimum change in torso angle over CHANGE_WINDOW frames before we
+consider it a genuine movement rather than pose-estimation noise.
+"""
+
+SUDDEN_LENGTH_CHANGE = 0.30
+"""
+Minimum relative change in torso length.
+
+Example:
+  old length = 0.20
+  new length = 0.14
+
+relative change = 0.30 -> 30%
+# """
+
+LEGS_TO_TORSO_RATIO = 3.0
 
 
 # Helper functions for visualization ___________________________________________
@@ -435,459 +465,398 @@ def run_inference(movenet, image, crop_region, crop_size):
 
 # Decision making ______________________________________________________________
 
-def analyze_keypoints_old(states: list) -> dict[str, bool | None]:
-    """Detect a fall based on torso orientation.
+def _get_torso_measurements(keypoints):
+    """Return the torso angle, torso length and shoulder width.
 
-    Uses the latest frame in `states`.
-    A fall is detected when:
-      - the torso keypoints have sufficient confidence
-      - the torso is approximately horizontal
-
-    Keypoint coordinates are normalized:
-        keypoint[..., 0] = y
-        keypoint[..., 1] = x
-        keypoint[..., 2] = confidence
+    Coordinates are normalized (y, x).
     """
 
-    # We only need the most recent frame for this basic detector.
-    keypoints = states[-1]
-
-    # Get indices
     left_shoulder = KEYPOINT_DICT["left_shoulder"]
     right_shoulder = KEYPOINT_DICT["right_shoulder"]
     left_hip = KEYPOINT_DICT["left_hip"]
     right_hip = KEYPOINT_DICT["right_hip"]
 
-    # Confidence scores
-    shoulder_conf = min(
+    # Confidence of the four torso points.
+    confidence = min(
         keypoints[0, 0, left_shoulder, 2],
         keypoints[0, 0, right_shoulder, 2],
-    )
-
-    hip_conf = min(
         keypoints[0, 0, left_hip, 2],
         keypoints[0, 0, right_hip, 2],
     )
 
-    # Check that all four torso keypoints are reliable.
-    torso_confident = (
-        shoulder_conf >= MIN_CONFIDENCE
-        and hip_conf >= MIN_CONFIDENCE
-    )
+    if confidence < MIN_CONFIDENCE:
+        return None
 
-    if not torso_confident:
-        return {
-            "user_in_frame": False,
-            "torso_angle": None,
-            "torso_confidence": min(shoulder_conf, hip_conf),
-            "fall_detected": False,
-        }
-
-    # Extract coordinates.
-    # They are stored as (y, x).
     ls = keypoints[0, 0, left_shoulder, :2]
     rs = keypoints[0, 0, right_shoulder, :2]
     lh = keypoints[0, 0, left_hip, :2]
     rh = keypoints[0, 0, right_hip, :2]
 
-    # Midpoint of shoulders.
-    shoulder_center = (ls + rs) / 2
-
-    # Midpoint of hips.
-    hip_center = (lh + rh) / 2
-
-    # Vector from hips to shoulders.
-    dy = shoulder_center[0] - hip_center[0]
-    dx = shoulder_center[1] - hip_center[1]
-
-    # Angle relative to vertical.
-    #
-    # atan2(dx, -dy) gives:
-    #   0°  -> torso pointing upward
-    #   90° -> torso horizontal
-    #   180° -> torso pointing downward
-    angle = np.degrees(np.arctan2(abs(dx), abs(dy)))
-
-    # Distance from horizontal (90°).
-    horizontal_error = abs(90.0 - angle)
-
-    fall_detected = horizontal_error <= ANGLE_THRESHOLD
-
-    return {
-        "user_in_frame": True,
-        "torso_angle": float(angle),
-        "torso_confidence": float(min(shoulder_conf, hip_conf)),
-        "fall_detected": fall_detected,
-    }
-
-
-def _pose_features(keypoints):
-    """Extract a small set of interpretable geometric features."""
-
-    # ------------------------------------------------------------------
-    # Keypoint indices
-    # ------------------------------------------------------------------
-
-    ls_i = KEYPOINT_DICT["left_shoulder"]
-    rs_i = KEYPOINT_DICT["right_shoulder"]
-    lh_i = KEYPOINT_DICT["left_hip"]
-    rh_i = KEYPOINT_DICT["right_hip"]
-    lk_i = KEYPOINT_DICT["left_knee"]
-    rk_i = KEYPOINT_DICT["right_knee"]
-    la_i = KEYPOINT_DICT["left_ankle"]
-    ra_i = KEYPOINT_DICT["right_ankle"]
-    nose_i = KEYPOINT_DICT["nose"]
-
-    # ------------------------------------------------------------------
-    # Confidence
-    # ------------------------------------------------------------------
-
-    torso_confidence = min(
-        keypoints[0, 0, ls_i, 2],
-        keypoints[0, 0, rs_i, 2],
-        keypoints[0, 0, lh_i, 2],
-        keypoints[0, 0, rh_i, 2],
-    )
-
-    if torso_confidence < MIN_CONFIDENCE:
-        return None
-
-    # ------------------------------------------------------------------
-    # Main body points
-    # ------------------------------------------------------------------
-
-    ls = keypoints[0, 0, ls_i, :2]
-    rs = keypoints[0, 0, rs_i, :2]
-    lh = keypoints[0, 0, lh_i, :2]
-    rh = keypoints[0, 0, rh_i, :2]
-
     shoulder_center = (ls + rs) / 2
     hip_center = (lh + rh) / 2
 
-    # ------------------------------------------------------------------
-    # 1. Torso angle
-    #
+    
+    # Torso angle
     # 0°  = vertical
     # 90° = horizontal
-    # ------------------------------------------------------------------
+    
+    dy = shoulder_center[0] - hip_center[0]
+    dx = shoulder_center[1] - hip_center[1]
+    angle = np.degrees(np.arctan2(abs(dx), abs(dy)))
 
-    torso_vector = shoulder_center - hip_center
+    torso_length = np.linalg.norm(shoulder_center - hip_center)
 
-    dy = torso_vector[0]
-    dx = torso_vector[1]
-
-    torso_angle = np.degrees(
-        np.arctan2(abs(dx), abs(dy))
-    )
+    shoulder_width = np.linalg.norm(ls - rs)
 
     # ------------------------------------------------------------------
-    # 2. Body bounding box
+    # Leg length
     #
-    # Use all sufficiently confident keypoints.
+    # Require all six leg keypoints to be confident. We don't want an
+    # unreliable knee/ankle prediction to trigger this detector.
     # ------------------------------------------------------------------
 
-    points = []
+    left_knee = KEYPOINT_DICT["left_knee"]
+    right_knee = KEYPOINT_DICT["right_knee"]
+    left_ankle = KEYPOINT_DICT["left_ankle"]
+    right_ankle = KEYPOINT_DICT["right_ankle"]
 
-    for i in range(17):
-        if keypoints[0, 0, i, 2] >= MIN_CONFIDENCE:
-            y, x = keypoints[0, 0, i, :2]
-            points.append((x, y))
-
-    if len(points) < 4:
-        return None
-
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
-
-    bbox_width = max(xs) - min(xs)
-    bbox_height = max(ys) - min(ys)
-
-    # Width / height.
-    #
-    # < 1  -> mostly vertical
-    # > 1  -> mostly horizontal
-    body_aspect_ratio = bbox_width / (bbox_height + 1e-6)
-
-    # ------------------------------------------------------------------
-    # 3. Foreshortening ratio
-    #
-    # Estimate actual body length from the skeleton, then compare it
-    # with its projected height in the image.
-    #
-    # A person falling toward/away from the camera can have a short
-    # projected body height even though their skeleton is still long.
-    # ------------------------------------------------------------------
-
-    def segment_length(i1, i2):
-        p1 = keypoints[0, 0, i1, :2]
-        p2 = keypoints[0, 0, i2, :2]
-
-        if (keypoints[0, 0, i1, 2] < MIN_CONFIDENCE or
-                keypoints[0, 0, i2, 2] < MIN_CONFIDENCE):
-            return None
-
-        return np.linalg.norm(p1 - p2)
-
-    segments = [
-        segment_length(ls_i, lh_i),
-        segment_length(rs_i, rh_i),
-        segment_length(lh_i, lk_i),
-        segment_length(rh_i, rk_i),
-        segment_length(lk_i, la_i),
-        segment_length(rk_i, ra_i),
+    leg_indices = [
+        left_hip,
+        right_hip,
+        left_knee,
+        right_knee,
+        left_ankle,
+        right_ankle,
     ]
 
-    if all(length is not None for length in segments):
-        body_length = (
-            (segments[0] + segments[1]) / 2 +
-            (segments[2] + segments[3]) / 2 +
-            (segments[4] + segments[5]) / 2
+    legs_confident = all(
+        keypoints[0, 0, index, 2] >= MIN_CONFIDENCE
+        for index in leg_indices
+    )
+
+    legs_to_torso_ratio = None
+
+    if legs_confident:
+        lk = keypoints[0, 0, left_knee, :2]
+        rk = keypoints[0, 0, right_knee, :2]
+        la = keypoints[0, 0, left_ankle, :2]
+        ra = keypoints[0, 0, right_ankle, :2]
+
+        left_leg_length = (
+            np.linalg.norm(lh - lk) +
+            np.linalg.norm(lk - la)
         )
 
-        foreshortening_ratio = (
-            body_length / (bbox_height + 1e-6)
+        right_leg_length = (
+            np.linalg.norm(rh - rk) +
+            np.linalg.norm(rk - ra)
         )
-    else:
-        body_length = None
-        foreshortening_ratio = None
 
-    # ------------------------------------------------------------------
-    # 4. Hip position
-    #
-    # Used to detect rapid downward movement.
-    # ------------------------------------------------------------------
+        average_leg_length = (
+            left_leg_length + right_leg_length
+        ) / 2
 
-    # ------------------------------------------------------------------
-    # 5. Nose position
-    #
-    # Also useful as a simple indication of downward movement.
-    # ------------------------------------------------------------------
+        legs_to_torso_ratio = (
+            average_leg_length /
+            (torso_length + 1e-6)
+        )
 
-    nose_y = None
-
-    if keypoints[0, 0, nose_i, 2] >= MIN_CONFIDENCE:
-        nose_y = float(keypoints[0, 0, nose_i, 0])
 
     return {
-        "torso_angle": float(torso_angle),
-        "body_aspect_ratio": float(body_aspect_ratio),
-        "foreshortening_ratio": (
-            float(foreshortening_ratio)
-            if foreshortening_ratio is not None
+        "angle": float(angle),
+        "torso_length": float(torso_length),
+        "shoulder_width": float(shoulder_width),
+        "legs_to_torso_ratio": (
+            float(legs_to_torso_ratio)
+            if legs_to_torso_ratio is not None
             else None
         ),
-        "hip_y": float(hip_center[0]),
-        "nose_y": nose_y,
-        "torso_confidence": float(torso_confidence),
+        "torso_confidence": float(confidence),
     }
+
+
+
+def _has_smooth_change(values, threshold):
+    """Check for a clear monotonic change across several frames.
+
+    We deliberately do NOT compare only the last two frames.
+
+    For example:
+
+        [10, 20, 35]  -> True
+        [10, 35, 12]  -> False
+        [10, 11, 12]  -> False if threshold is 5
+        [10, 12, 35]  -> True
+
+    The middle frame must move in the same direction as the complete
+    change. This filters out isolated MoveNet prediction spikes.
+    """
+
+    if len(values) < CHANGE_WINDOW:
+        return False
+
+    values = values[-CHANGE_WINDOW:]
+
+    total_change = values[-1] - values[0]
+
+    # Not enough movement.
+    if abs(total_change) < threshold:
+        return False
+
+    # Every step must have the same direction.
+    direction = np.sign(total_change)
+
+    for previous, current in zip(values[:-1], values[1:]):
+        if np.sign(current - previous) != direction:
+            return False
+
+    return True
+
+
+def _head_below_body(keypoints):
+    """Return True if the head is clearly below another body part.
+
+    Image coordinates use y increasing downward, so a larger y means
+    lower in the image.
+
+    Only reasonably confident body keypoints are considered.
+    """
+
+    nose_i = KEYPOINT_DICT["nose"]
+
+    nose_confidence = keypoints[0, 0, nose_i, 2]
+
+    if nose_confidence < MIN_CONFIDENCE:
+        return False
+
+    nose_y = keypoints[0, 0, nose_i, 0]
+
+    body_parts = [
+        "left_shoulder",
+        "right_shoulder",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+    ]
+
+    for part in body_parts:
+        index = KEYPOINT_DICT[part]
+
+        if keypoints[0, 0, index, 2] < MIN_CONFIDENCE:
+            continue
+
+        part_y = keypoints[0, 0, index, 0]
+
+        if nose_y > part_y:
+            return True
+
+    return False
 
 
 def analyze_keypoints(states: list) -> dict:
-    """Detect a fall from body geometry and short-term motion.
+    """Detect a fall using torso orientation plus conservative temporal cues.
 
-    The detector intentionally uses a small number of interpretable
-    features:
+    A fall is detected when at least one of these conditions is met:
 
-      - torso angle
-      - body bounding-box aspect ratio
-      - skeleton/body foreshortening
-      - hip/head movement
-      - persistence across recent frames
+      1. The torso is approximately horizontal.
+         This is the original detector.
 
-    The important distinction is between:
+      2. The torso is strongly foreshortened relative to the shoulders.
+         This helps with falls toward/away from the camera.
 
-        "the person is lying"
+      3. The torso angle changes substantially and consistently across
+         several consecutive frames.
 
-    and:
+      4. The torso length changes substantially and consistently across
+         several consecutive frames.
 
-        "the person has recently transitioned into a lying-like pose"
-
-    The latter is treated as a fall candidate.
+    The temporal checks intentionally require a monotonic evolution
+    across multiple frames rather than reacting to one-frame noise.
     """
 
-    if len(states) < 2:
+    # ------------------------------------------------------------------
+    # Analyze the most recent frame.
+    # ------------------------------------------------------------------
+
+    current = _get_torso_measurements(states[-1])
+
+    if current is None:
         return {
             "user_in_frame": False,
             "torso_angle": None,
             "torso_confidence": None,
-            "body_aspect_ratio": None,
-            "foreshortening_ratio": None,
-            "fall_score": 0,
+            "torso_length": None,
+            "torso_to_shoulders_ratio": None,
+            "angle_change": None,
+            "length_change": None,
             "fall_detected": False,
         }
 
-    # Extract features for the complete buffer.
-    features = []
+    # Falls to the side
+    horizontal_torso = (abs(90.0 - current["angle"]) <= ANGLE_THRESHOLD)
 
-    for keypoints in states:
-        pose = _pose_features(keypoints)
+    # Falls towards or away
 
-        if pose is not None:
-            features.append(pose)
-
-    # Not enough reliable frames.
-    if len(features) < 2:
-        return {
-            "user_in_frame": False,
-            "torso_angle": None,
-            "torso_confidence": None,
-            "body_aspect_ratio": None,
-            "foreshortening_ratio": None,
-            "fall_score": 0,
-            "fall_detected": False,
-        }
-
-    current = features[-1]
-    previous = features[-2]
-
-    # ------------------------------------------------------------------
-    # Current posture
-    # ------------------------------------------------------------------
-
-    horizontal_torso = current["torso_angle"] >= 60.0
-
-    horizontal_body = (
-        current["body_aspect_ratio"] >= 1.20
+    torso_to_shoulders_ratio = (
+        current["torso_length"] /
+        (current["shoulder_width"] + 1e-6)
     )
 
-    foreshortened = (
-        current["foreshortening_ratio"] is not None
-        and current["foreshortening_ratio"] >= 1.50
+    short_torso = (
+        torso_to_shoulders_ratio <= TORSO_TO_SHOULDERS_RATIO
     )
 
     # ------------------------------------------------------------------
-    # Temporal changes
-    # ------------------------------------------------------------------
-
-    # Compare with the oldest reliable frame in the buffer.
-    first = features[0]
-
-    aspect_change = (
-        current["body_aspect_ratio"] -
-        first["body_aspect_ratio"]
-    )
-
-    foreshortening_change = None
-
-    if (
-        current["foreshortening_ratio"] is not None
-        and first["foreshortening_ratio"] is not None
-    ):
-        foreshortening_change = (
-            current["foreshortening_ratio"] -
-            first["foreshortening_ratio"]
-        )
-
-    # Hip movement toward the bottom of the image.
-    hip_drop = current["hip_y"] - first["hip_y"]
-
-    # Head movement toward the bottom of the image.
-    head_drop = None
-
-    if (
-        current["nose_y"] is not None
-        and first["nose_y"] is not None
-    ):
-        head_drop = current["nose_y"] - first["nose_y"]
-
-    # ------------------------------------------------------------------
-    # Did the person actually change posture?
+    # Temporal analysis
     #
-    # This is important. Someone who was already lying down should not
-    # immediately be considered to have fallen.
+    # We only need the last CHANGE_WINDOW frames. Since analyze_keypoints
+    # is called on every processed frame, the same frames will naturally
+    # be examined multiple times. That's something to make more efficient.
     # ------------------------------------------------------------------
 
-    posture_changed = (
-        aspect_change >= 0.30
-        or (
-            foreshortening_change is not None
-            and foreshortening_change >= 0.30
-        )
-        or horizontal_torso and first["torso_angle"] < 45.0
+    angle_change_detected = False
+    length_change_detected = False
+
+    angle_change = None
+    length_change = None
+
+    if len(states) >= CHANGE_WINDOW:
+
+        recent_measurements = []
+
+        for state in states[-CHANGE_WINDOW:]:
+            measurement = _get_torso_measurements(state)
+
+            if measurement is not None:
+                recent_measurements.append(measurement)
+
+        # Require all frames to contain a reliable torso.
+        if len(recent_measurements) == CHANGE_WINDOW:
+
+            angles = [
+                measurement["angle"]
+                for measurement in recent_measurements
+            ]
+
+            lengths = [
+                measurement["torso_length"]
+                for measurement in recent_measurements
+            ]
+
+            # ----------------------------------------------------------
+            # Angle evolution
+            # ----------------------------------------------------------
+
+            angle_change = angles[-1] - angles[0]
+
+            angle_change_detected = _has_smooth_change(
+                angles,
+                SUDDEN_ANGLE_CHANGE,
+            )
+
+            # ----------------------------------------------------------
+            # Torso-length evolution
+            # ----------------------------------------------------------
+
+            length_change = lengths[-1] - lengths[0]
+
+            # Normalize by the original length so that the threshold
+            # does not depend strongly on how close the person is
+            # to the camera.
+            relative_length_change = abs(length_change) / (
+                lengths[0] + 1e-6
+            )
+
+            length_change_detected = _has_smooth_change(
+                lengths,
+                lengths[0] * SUDDEN_LENGTH_CHANGE,
+            )
+
+    head_below_frames = sum(
+        _head_below_body(state)
+        for state in states
     )
 
-    rapid_downward_motion = (
-        hip_drop >= 0.10
-        or (
-            head_drop is not None
-            and head_drop >= 0.10
+    head_below_body = head_below_frames >= 2
+
+    legs_too_long = (
+        current["legs_to_torso_ratio"] is not None
+        and current["legs_to_torso_ratio"] >= LEGS_TO_TORSO_RATIO
+    )
+
+    legs_too_long_frames = sum(
+        measurement is not None
+        and measurement["legs_to_torso_ratio"] is not None
+        and measurement["legs_to_torso_ratio"] >= LEGS_TO_TORSO_RATIO
+        for measurement in (
+            _get_torso_measurements(state)
+            for state in states
         )
     )
 
+    fall_away = legs_too_long_frames >= 2
+
+
     # ------------------------------------------------------------------
-    # Score the current frame.
-    #
-    # Keep this deliberately simple so it is easy to tune.
+    # Final decision
     # ------------------------------------------------------------------
 
-    fall_score = 0
+    fall_reasons = []
 
     if horizontal_torso:
-        fall_score += 2
+        fall_reasons.append("horizontal_torso")
 
-    if horizontal_body:
-        fall_score += 2
+    if short_torso:
+        fall_reasons.append("short_torso")
 
-    if foreshortened:
-        fall_score += 2
+    if angle_change_detected and length_change_detected:
+        fall_reasons.append("sudden_angle_and_length_change")
 
-    if posture_changed:
-        fall_score += 2
+    if head_below_body:
+        fall_reasons.append("head_below_body")
 
-    if rapid_downward_motion:
-        fall_score += 1
+    if fall_away:
+        fall_reasons.append("legs_too_long_for_torso")
 
-    # ------------------------------------------------------------------
-    # Temporal confirmation.
-    #
-    # Require the current and previous frames to look suspicious.
-    # At 3 FPS this corresponds to roughly 0.33 seconds of persistence.
-    # ------------------------------------------------------------------
+    fall_detected = len(fall_reasons) > 0
 
-    previous_horizontal = (
-        previous["torso_angle"] >= 60.0
-        or previous["body_aspect_ratio"] >= 1.20
-        or (
-            previous["foreshortening_ratio"] is not None
-            and previous["foreshortening_ratio"] >= 1.50
-        )
-    )
-
-    fall_candidate = (
-        fall_score >= 4
-        and posture_changed
-    )
-
-    fall_confirmed = (
-        fall_candidate
-        and previous_horizontal
-    )
 
     return {
         "user_in_frame": True,
 
-        # Current geometric state
-        "torso_angle": round(current["torso_angle"], 1),
+        # Current frame
+        "torso_angle": round(current["angle"], 1),
         "torso_confidence": round(
             current["torso_confidence"], 2
         ),
-        "body_aspect_ratio": round(
-            current["body_aspect_ratio"], 2
+        "torso_length": round(
+            current["torso_length"], 3
         ),
-        "foreshortening_ratio": (
-            round(current["foreshortening_ratio"], 2)
-            if current["foreshortening_ratio"] is not None
+        "torso_to_shoulders_ratio": round(
+            torso_to_shoulders_ratio, 2
+        ),
+
+        # Temporal information
+        "angle_change": (
+            round(angle_change, 1)
+            if angle_change is not None
+            else None
+        ),
+        "length_change": (
+            round(length_change, 3)
+            if length_change is not None
             else None
         ),
 
-        # Temporal/debug information
-        "aspect_change": round(aspect_change, 2),
-        "hip_drop": round(hip_drop, 2),
-        "fall_score": fall_score,
+        # Final decision
+        "fall_detected": fall_detected,
 
-        "fall_detected": fall_confirmed,
+        # Debug
+        "fall_reasons": fall_reasons if fall_detected else None,
     }
-
 
 
 # Main _________________________________________________________________________
@@ -933,6 +902,13 @@ def webcam_fall_detection():
                 crop_size=[input_size, input_size],
             )
 
+            # Update crop region
+            crop_region = determine_crop_region(
+                keypoints_with_scores,
+                image_height,
+                image_width,
+            )
+
             states.append(keypoints_with_scores)
 
             if len(states) >= 2:
@@ -943,6 +919,12 @@ def webcam_fall_detection():
                     "fall_detected": False,
                 }
 
+            # Print fall reasons only when a fall is detected (debug on console)
+            if state["fall_detected"]:
+                print(
+                    f"FALL DETECTED - reasons: "
+                    f"{', '.join(state['fall_reasons'])}"
+                )
 
             # Debug over the image ---------------------------------------------
 
