@@ -2,6 +2,11 @@ NESSO:
     Server = ?????
     Port = 1883
 
+    Publicar el siguiente mensaje nadamas conectarse al servidor:
+        topic   : Nesso/Status
+        payload : ONLINE
+        retain = True
+
     Subscribirse a Nesso/command. Puede recibir dos mensajes:
         START_VIBRATE: empezar a pitar
         STOP_VIBRATE: parar el pitido
@@ -9,10 +14,6 @@ NESSO:
     Cuando detecta caida:
         topic   : Nesso/events
         payload : ANOMALIA_DETECTADA
-
-    Publicar el siguiente mensaje nadamas conectarse al servidor:
-        topic   : Nesso/Status
-        payload : ONLINE
 
     Configurar last Will Testament:
         topic   : Nesso/Status
