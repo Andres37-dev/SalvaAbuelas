@@ -16,6 +16,13 @@ A real alert can then be connected to any type of communication system like send
 
 Moreover, for monitoring the Nesso's battery you can know its charge by pressing the central button.
 
+## Contributors
+
+- Shiqi Liang – Est. del Grado en Ingeniería Informática, especialidad de TI, UPC.
+- Ángel Morales Cirera  – Est. del Grado en Ciencia e Ingeniería de Datos, UPC.
+- Andrés Pociello Carrissi – Est. del Grado en Ingeniería Informática, especialidad de TI, UPC.
+- Pau Quevedo Gabarrós – Est. del Grado en Ingeniería Informática, especialidad de EC, UPC.
+
 ## Motivation
 
 Nobody can be 24/7 with a dependent person. Because we have a job to assist, or simply tasks to do such as shopping some groceries, we will need to leave those at risk alone for prolonged periods of time.
