@@ -16,7 +16,9 @@ A real alert can then be connected to any type of communication system like send
 
 ## Motivation
 
+Nobody can be 24/7 with a dependent person. Because we have a job to assist, or simply tasks to do such as shopping some groceries, we will need to leave those at risk alone for prolonged periods of time.
 
+That is where Sentinel shines: it allows responsables to detect emergencies and act in response to them.
 
 ## What you need
 
@@ -73,6 +75,16 @@ Then, the logic to detect a fall is straightforward. There are some various case
 - The head being under other parts of the body (except hands or wrists).
 - A sudden variation of both torso length and angle.
 
+### IMU (accelerometer + gyroscope)
+
+The accelerometer and gyroscope are sampled continuously and filtered for noise, watching for anomalies. Then, the logic to flag a fall is also quite straightforward. A few signals are combined into a score, the strongest being:
+
+- A sharp drop in acceleration (near weightlessness), followed by a hard impact within a fraction of a second.
+- A large, sudden change in the device's orientation, from upright to roughly flat.
+- A strong swing in acceleration measured along the direction of gravity specifically, rather than any direction.
+- A burst of fast rotation.
+- Stillness right after, instead of continued movement.
+
 ## Credits
 
 To build our project we have used:
@@ -81,3 +93,4 @@ To build our project we have used:
 
 - The Arduino Python package.
 
+- Arduino IDE
