@@ -14,6 +14,8 @@ And all possible alerts can be cancelled by the user so that we prevent false po
 
 A real alert can then be connected to any type of communication system like sending a message to a phone, so that someone can come to the rescue of the person in trouble.
 
+Moreover, for monitoring the Nesso's battery you can know its charge by pressing the central button.
+
 ## Motivation
 
 Nobody can be 24/7 with a dependent person. Because we have a job to assist, or simply tasks to do such as shopping some groceries, we will need to leave those at risk alone for prolonged periods of time.
@@ -26,7 +28,7 @@ You need:
 
 - 1 Arduino UNO Q board with Linux installed.
 
-- A webcam such as the Logitech Brio 105.
+- A webcam such as the Logitech Brio 105 ([here](https://logitech.com/en-es/products/webcams/brio-105-business-webcam.html))
 
 - An Arduino Nesso N1. You will need to attach it to a collar. We recommend to unscrew the four screws and pass a thin collar through the two pieces of the Nesso.
 
@@ -44,22 +46,30 @@ You need:
 
 3. Change the mqtt_server in Prgroam2.py, Config.h to the assigned ip. Do the same for the SERVERR_IP in Program1-new.py
 
-4. In Config.h change wifi_ssid to the same wifi name that the arduino uno Q, and set the wifi_password to the wifi password. 
+4. By default we have made an example account that will send the email. Its recommended to change it. In Program1-new.py change the following to set up the email notification:
+   EMAIL_FROM: the email that will send the alert
+    EMAIL_PASSWORD = its password, if using a google account for the EMAIL_FROM, search its app password
+    EMAIL_TO = the one who will receive the email
+ 
 
-5. SSH into the arduino uno Q, run:
+6. In Config.h change wifi_ssid to the same wifi name that the arduino uno Q, and set the wifi_password to the wifi password. 
+
+7. SSH into the arduino uno Q, run:
     sudo apt update
     sudo apt install mosquitto
    
-7. edit the /etc/mosquitto/mosquitto.conf, and add the two following lines:
+8. edit the /etc/mosquitto/mosquitto.conf, and add the two following lines:
    listener 0.0.0.0 1883  
    allow_anonymous true  
    
-8. run the following command:
+9. run the following command:
    sudo systemctl restart mosquitto.service
 
-9. connect to the hub the arduino uno Q, the camera and the battery.
+10. connect to the hub the arduino uno Q, the camera and the battery.
 
-10. Give power to your Arduino, make sure the Nesso has battery, and place the camera somewhere it can see a whole room, at a height between 1 and 2 meters.
+11. Give power to your Arduino, make sure the Nesso has battery, and place the camera somewhere it can see a whole room, at a height between 1 and 2 meters.
+
+In case that the nesso doasn't show any type of display, it means that the connection to the arduino MQTT broker is not working correctly: make sure you followed the instructions correctly.
 
 ## Some technical details
 
@@ -84,6 +94,10 @@ The accelerometer and gyroscope are sampled continuously and filtered for noise,
 - A strong swing in acceleration measured along the direction of gravity specifically, rather than any direction.
 - A burst of fast rotation.
 - Stillness right after, instead of continued movement.
+
+## Central Logic point
+The arduino uno Q hosts a program that communicates through MQTT to the camera stream and the nesso stream. When either the nesso detects a fall, or the users triggers the alarm manually an email will be sent to the caregiver notifying of the fall.
+However, when the camera is the one to detect that the person has fallen, it makes the nesso beep, waiting for a confirmation. If the user doasn't confirm in 15s the real alarm is sent.
 
 ## Credits
 
