@@ -38,7 +38,7 @@ class Conf():
     SMTP_SERVER = "smtp.gmail.com"
     SMTP_PORT = 465
     EMAIL_FROM = "emergencyalert37@gmail.com"
-    EMAIL_PASSWORD = "obaqlnqeggitltps"
+    EMAIL_PASSWORD = ""
     EMAIL_TO = "anpoca05@gmail.com"
 
 
