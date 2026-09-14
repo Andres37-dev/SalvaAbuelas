@@ -51,8 +51,8 @@ You need:
     sudo apt install mosquitto
    
 7. edit the /etc/mosquitto/mosquitto.conf, and add the two following lines:
-   listener 0.0.0.0 1883
-   allow_anonymous true
+   listener 0.0.0.0 1883  
+   allow_anonymous true  
    
 8. run the following command:
    sudo systemctl restart mosquitto.service
