@@ -168,6 +168,7 @@ bool keyPressed(ExpanderPin key) {
   return justPressed;
 }
 
+
 // ============================================================
 // Calculate orientation from accelerometer
 // ============================================================
@@ -394,6 +395,7 @@ void ensureMqttConnected() {
   mqttClient.loop();
 
   if (!mqttClient.connected()) {
+    DBG_PRINTLN("MQTT NOT CONNECTED");
     static unsigned long lastReconnectAttempt = 0;
     if (millis() - lastReconnectAttempt > 2000) {   // don't retry more than every 2s
       lastReconnectAttempt = millis();
@@ -414,12 +416,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       confirmationFromMQTT = true; 
       if (!alreadyConfirming) {
         alreadyConfirming = true;
-        startConfirmation(100);
+        startConfirmation(99);
       }
     }
     else if (msg == "STOP_VIBRATE") noTone(BEEP_PIN);
   }
 }
+
 
 // ============================================================
 // SETUP
@@ -430,6 +433,7 @@ void setup() {
 
   battery.begin();
   display.begin();
+  display.setRotation(SCREEN_ROTATION);
 
   DBG_PRINTLN();
   DBG_PRINTLN("==============================");

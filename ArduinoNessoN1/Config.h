@@ -5,7 +5,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-#define FIRMWARE_VERSION "v4.1.2"
+#define FIRMWARE_VERSION "v5.0.1"
 #define SERIAL_ENABLED true
 
 #ifndef BEEP_PIN // just in case since it once gave me problems
@@ -31,7 +31,7 @@ constexpr const char* MQTT_TOPIC_COMMAND = "Nesso/command";
 constexpr const char* MQTT_TOPIC_EVENTS  = "Nesso/events";
 
 
-const unsigned int SCREEN_ROTATION = 0; // {0..3} 0 vertical KEY1 on the button, keeps rotating 90º to the right
+const unsigned int SCREEN_ROTATION = 3; // {0..3} 0 vertical KEY1 on the button, keeps rotating 90º to the right
 const unsigned int SCREEN_HEIGHT = (SCREEN_ROTATION % 2 == 0) ? 240 : 135;
 const unsigned int SCREEN_WIDTH  = (SCREEN_ROTATION % 2 == 1) ? 135 : 240;
 

@@ -5,8 +5,6 @@
 #include <math.h>
 #include "Config.h"
 
-void drawVersionBatteryLabel(uint16_t color);
-void normalScreen(float lastFallScore);
 void confirmationScreen(int score);
 void alarmScreen(int score);
 unsigned long updateConfirmationScreen(unsigned long confirmStartTime, int &lastDisplayedCountdown);

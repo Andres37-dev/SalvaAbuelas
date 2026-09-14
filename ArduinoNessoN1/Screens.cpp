@@ -1,72 +1,35 @@
 #include "Screens.h"
 
-void drawVersionBatteryLabel(uint16_t color) {
-  display.setTextSize(2);
-  display.setTextColor(color);
-
-  display.setCursor(0, SCREEN_HEIGHT - 32);
-  display.print(String(battery.getChargeLevel()).c_str()); display.println("%");
-  display.println(FIRMWARE_VERSION);
-}
-
-void normalScreen(float lastFallScore) {
-  batteryScreen(); 
-  return;
-  // display.fillScreen(TFT_BLACK);
-  // display.setTextColor(TFT_WHITE);
-  // display.setTextSize(1);
-
-  // display.setCursor(5, 5);
-  // display.println("Fall detector");
-  // display.setCursor(5, 20);
-  // display.println("Monitoring...");
-
-  // if (lastFallScore >= 0.0f) {
-  //   display.setCursor(5, 40);
-  //   display.print("Last event: ");
-  //   display.print((int)lastFallScore);
-  //   display.println("%");
-  // }
-
-  // drawVersionBatteryLabel(TFT_WHITE);
-}
-
 void confirmationScreen(int score) {
-  display.setRotation(0);
   display.fillScreen(TFT_ORANGE);
   display.setTextColor(TFT_BLACK);
 
-  display.setTextSize(2);
-  display.setCursor(0, 10);
+  display.setTextSize(3);
+  display.setCursor(10, 20);
   display.println("ARE YOU OK?");
+  
+  display.setTextSize(2);
+  display.setCursor(3, 50);
+  display.println("Press the button if you're fine.");
+  
+  display.setCursor(3, 70);
+  display.print("Cancel in: ");
 
-  display.setTextSize(1);
-  display.setCursor(10, 45);
+  display.setCursor(3, SCREEN_HEIGHT - 10);
   display.print("Confidence: "); display.print(score); display.println("%");
-
-  display.setCursor(0, 85);
-  display.println("Press KEY1 if you're fine");
-
-  drawVersionBatteryLabel(TFT_BLACK);
 }
 
 void alarmScreen(int score) {
-  display.setRotation(0);
   display.fillScreen(TFT_RED);
-  display.setTextColor(TFT_WHITE);
+  display.setTextColor(TFT_BLACK);
 
+  display.setTextSize(3);
+  display.setCursor(10, 20);
+  display.println("FALL ALARM");
+  
   display.setTextSize(2);
-  display.setCursor(0, 10);
-  display.println("FALL DETECTED!");
-
-  display.setTextSize(1);
-  display.setCursor(10, 50);
-  display.print("Confidence: "); display.print(score); display.println("%");
-
-  display.setCursor(0, 70);
-  display.println("Press KEY1 to cancel");
-
-  drawVersionBatteryLabel(TFT_WHITE);
+  display.setCursor(3, 64);
+  display.println("Press the button to silence");
 }
 
 unsigned long updateConfirmationScreen(unsigned long confirmStartTime, int &lastDisplayedCountdown) {
@@ -75,11 +38,10 @@ unsigned long updateConfirmationScreen(unsigned long confirmStartTime, int &last
   if (secondsLeft < 0) secondsLeft = 0;
   if (secondsLeft != lastDisplayedCountdown) {
     lastDisplayedCountdown = secondsLeft;
-    display.fillRect(10, 65, 220, 16, TFT_ORANGE);
+    display.fillRect(138, 70, 40, 16, TFT_ORANGE);
     display.setTextColor(TFT_BLACK);
-    display.setTextSize(1);
-    display.setCursor(10, 65);
-    display.print("Cancel in: ");
+    display.setTextSize(2);
+    display.setCursor(138, 70);
     display.print(secondsLeft);
     display.println("s");
   }
@@ -88,11 +50,10 @@ unsigned long updateConfirmationScreen(unsigned long confirmStartTime, int &last
 
 void batteryScreen() {
   display.fillScreen(TFT_BLACK);
-  display.setRotation(3);
   display.setTextSize(7);
   display.setTextColor((battery.getChargeStatus() == NessoBattery::CHARGING) ? TFT_YELLOW : TFT_WHITE);
 
   int textWidthBattery = display.textWidth(String(battery.getChargeLevel()).c_str());
-  display.setCursor(240 - 72 - textWidthBattery, 40);
+  display.setCursor(SCREEN_WIDTH - 72 - textWidthBattery, 40);
   display.print(String(battery.getChargeLevel()).c_str()); display.println("%");
 }
