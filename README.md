@@ -38,9 +38,28 @@ You need:
 
 1. Download Arduino App Lab.
 
+3. Configure arduino uno Q to set up a wifi connection with the help of arduino lab, and remember the assigned ip, also visible in the arduino lab.
+
 2. Place all the necessary files into the Arduino, including the Python scripts, requirements and the MoveNet model.
 
-3. Give power to your Arduino, make sure the Nesso has battery, and place the camera somewhere it can see a hole room, at a height between 1 and 2 meters.
+3. Change the mqtt_server in Prgroam2.py, Config.h to the assigned ip. Do the same for the SERVERR_IP in Program1-new.py
+
+4. In Config.h change wifi_ssid to the same wifi name that the arduino uno Q, and set the wifi_password to the wifi password. 
+
+5. SSH into the arduino uno Q, run:
+    sudo apt update
+    sudo apt install mosquitto
+   
+7. edit the /etc/mosquitto/mosquitto.conf, and add the two following lines:
+   listener 0.0.0.0 1883
+   allow_anonymous true
+   
+8. run the following command:
+   sudo systemctl restart mosquitto.service
+
+9. connect to the hub the arduino uno Q, the camera and the battery.
+
+10. Give power to your Arduino, make sure the Nesso has battery, and place the camera somewhere it can see a whole room, at a height between 1 and 2 meters.
 
 ## Some technical details
 
